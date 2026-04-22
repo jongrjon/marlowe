@@ -85,14 +85,32 @@ trap 'marlowe save --if-dirty --quiet 2>/dev/null' EXIT
 
 `marlowe save` is a no-op when the working tree is clean, so the trap is cheap.
 
-## Supported tools (v0.1)
+## Supported tools
 
-| Tool        | Inject | Capture |
-|-------------|--------|---------|
-| Claude Code | ✅      | (later) |
-| Codex CLI   | stub   | —       |
-| Cursor      | stub   | —       |
+| Tool        | Inject | Capture        |
+|-------------|--------|----------------|
+| Claude Code | ✅     | ✅ via protocol |
+| Codex CLI   | ✅     | ✅ via protocol |
+| Cursor      | stub   | —              |
+
+## Capture protocol
+
+Inject is half the loop — capture is the other half. Marlowe's capture layer
+doesn't use per-tool hooks; instead, every adapter injects a small protocol
+block that tells the AI when to call `marlowe remember` / `marlowe add` itself.
+
+| You say…                                     | AI runs                               |
+|----------------------------------------------|---------------------------------------|
+| "remember X" / "don't forget X"              | `marlowe remember "X"`                |
+| "from now on X" / "always/never X"           | `marlowe add preference "X"`          |
+| "X means Y" (personal shorthand)             | `marlowe add lingo "X — Y"`           |
+| "say X instead of Y" / "use X tone"          | `marlowe add ai-lingo "X"`            |
+| "working on X" / "new project: X"            | `marlowe add project "X"`             |
+
+Works on any tool that can shell out — so Claude Code, Codex, and any future
+adapter get capture for free. Auto-commits + pushes.
 
 ## Status
 
-v0.1 — preferences + Claude adapter only. Dogfooding before expanding.
+v0.6 — inject working on Claude + Codex, capture protocol shipped across both.
+Cursor adapter still stub-only.

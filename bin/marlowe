@@ -370,7 +370,12 @@ cmd_status() {
   path="$HOME/.codex/AGENTS.md"
   if _has_marlowe_block "$path"; then
     ago="$(_mtime_ago "$path")"
-    printf '  %s✓%s codex     %s  (%s)\n' "$PINK" "$RESET" "$path" "$ago"
+    local codex_size codex_warn
+    codex_size="$(wc -c < "$path")"
+    codex_warn=""
+    [ "$codex_size" -gt 32768 ] && codex_warn=" ${PINK}!${RESET} exceeds 32K default"
+    printf '  %s✓%s codex     %s  (%s, %dB)%s\n' \
+      "$PINK" "$RESET" "$path" "$ago" "$codex_size" "$codex_warn"
   else
     printf '  %s·%s codex     not applied\n' "$DIM" "$RESET"
   fi
