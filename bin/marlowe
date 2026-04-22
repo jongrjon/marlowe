@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+MARLOWE_HOME="${MARLOWE_HOME:-$HOME/.marlowe}"
+MARLOWE_FRAMEWORK="${MARLOWE_FRAMEWORK:-$HOME/.marlowe-framework}"
+
+cmd="${1:-help}"; shift || true
+
+case "$cmd" in
+  sync)
+    git -C "$MARLOWE_HOME" pull --ff-only 2>/dev/null || true
+    for a in "$MARLOWE_FRAMEWORK"/adapters/*/apply.sh; do
+      tool="$(basename "$(dirname "$a")")"
+      [ -d "$HOME/.$tool" ] && "$a"
+    done
+    ;;
+  edit)
+    "${EDITOR:-vi}" "$MARLOWE_HOME/preferences.md"
+    ;;
+  apply)
+    tool="${1:?usage: marlowe apply <claude|codex|cursor>}"
+    "$MARLOWE_FRAMEWORK/adapters/$tool/apply.sh"
+    ;;
+  help|*)
+    cat <<EOF
+marlowe — portable AI context
+
+  sync              pull private repo, re-apply all adapters
+  edit              open preferences.md in \$EDITOR
+  apply <tool>      re-run one adapter (claude | codex | cursor)
+EOF
+    ;;
+esac
