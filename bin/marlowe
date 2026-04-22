@@ -33,6 +33,29 @@ confirm() {
   case "${reply:-Y}" in Y|y|yes|YES) return 0 ;; *) return 1 ;; esac
 }
 
+_with_lock() {
+  # _with_lock <fn> [args…]  — serialize write-side commands per host.
+  # Lock lives inside $MARLOWE_HOME/.git/ so git ignores it automatically;
+  # falls back to $MARLOWE_HOME/.lock if the data repo isn't initialized yet.
+  local fn="$1"; shift
+  local lockdir lockfile
+  if [ -d "$MARLOWE_HOME/.git" ]; then
+    lockdir="$MARLOWE_HOME/.git"
+  else
+    mkdir -p "$MARLOWE_HOME"
+    lockdir="$MARLOWE_HOME"
+  fi
+  lockfile="$lockdir/marlowe.lock"
+  touch "$lockfile"
+  (
+    if ! flock -w 10 -x 9; then
+      say "another marlowe operation is running — try again shortly"
+      exit 1
+    fi
+    "$fn" "$@"
+  ) 9<"$lockfile"
+}
+
 cmd_init() {
   local force=0
   [ "${1:-}" = "--force" ] && force=1
@@ -441,14 +464,16 @@ EOF
 
 cmd="${1:-help}"; shift || true
 case "$cmd" in
+  # Read-side: no lock.
   init)   cmd_init   "$@" ;;
   status) cmd_status "$@" ;;
-  add)      cmd_add      "$@" ;;
-  edit)     cmd_edit     "$@" ;;
-  remember) cmd_remember "$@" ;;
-  save)     cmd_save     "$@" ;;
   lint)   cmd_lint   "$@" ;;
-  sync)   cmd_sync   "$@" ;;
-  apply)  cmd_apply  "$@" ;;
+  # Write-side: serialize per-host via flock.
+  add)      _with_lock cmd_add      "$@" ;;
+  edit)     _with_lock cmd_edit     "$@" ;;
+  remember) _with_lock cmd_remember "$@" ;;
+  save)     _with_lock cmd_save     "$@" ;;
+  sync)     _with_lock cmd_sync     "$@" ;;
+  apply)    _with_lock cmd_apply    "$@" ;;
   help|*) cmd_help ;;
 esac
