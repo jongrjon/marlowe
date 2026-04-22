@@ -47,11 +47,42 @@ The installer clones the framework to `~/.marlowe-framework/`, puts `marlowe` on
 ## Usage
 
 ```sh
-marlowe init [--force]   first-time setup
-marlowe sync             pull private repo, re-apply every detected adapter
-marlowe edit             open preferences.md in $EDITOR
-marlowe apply <tool>     re-run one adapter (claude | codex | cursor)
+marlowe init [--force]        first-time setup
+marlowe status                one-glance health check
+marlowe add <type> <text…>    append a structured entry (auto-commits + pushes)
+                              types: lingo | ai-lingo | preference | project
+marlowe edit                  open preferences.md in $EDITOR; offers auto-save
+marlowe save [-m <msg>]       commit + push + re-apply (no-op if clean)
+marlowe lint                  validate preferences.md
+marlowe sync                  pull from origin, re-apply adapters
+marlowe apply <tool>          re-run one adapter (claude | codex | cursor)
 ```
+
+## Push policy — when does Marlowe commit / push?
+
+> **Commit on every user action. Push opportunistically. Surface drift via `status`.**
+
+| Trigger                  | Commit | Push |
+|--------------------------|--------|------|
+| `marlowe add …`          | ✓      | ✓    |
+| `marlowe edit` → save    | ask    | ask  |
+| `marlowe save`           | ✓      | ✓    |
+| `marlowe sync`           | —      | —    |
+
+Design notes:
+- **Local commit is durable immediately** — survives reboot as soon as the command returns, because git objects are fsync'd to disk.
+- **Push is best-effort** — if you're offline, the next `marlowe add` / `edit` / `save` retries automatically. `status` shows `ahead N` when you have unpushed commits.
+- **No timers / cron by default** — events, not clocks.
+
+### Optional: shell-exit safety net
+
+If you want a belt-and-braces retry when you log out of a shell (useful on laptops that sleep often), add this to `~/.bashrc` or `~/.zshrc`:
+
+```sh
+trap 'marlowe save --if-dirty --quiet 2>/dev/null' EXIT
+```
+
+`marlowe save` is a no-op when the working tree is clean, so the trap is cheap.
 
 ## Supported tools (v0.1)
 

@@ -149,10 +149,139 @@ cmd_sync() {
   done
 }
 
-cmd_edit()  { "${EDITOR:-vi}" "$MARLOWE_HOME/preferences.md"; }
 cmd_apply() {
   local tool="${1:?usage: marlowe apply <claude|codex|cursor>}"
   "$MARLOWE_FRAMEWORK/adapters/$tool/apply.sh"
+}
+
+cmd_lint() {
+  local warn_only=0
+  [ "${1:-}" = "--warn-only" ] && warn_only=1
+  local f="$MARLOWE_HOME/preferences.md"
+  [ -f "$f" ] || die "no preferences.md at $f"
+
+  local issues=0
+  if grep -q '__[A-Z_]*__' "$f"; then
+    printf '  %s·%s unresolved placeholders:\n' "$PINK" "$RESET"
+    grep -n '__[A-Z_]*__' "$f" | head -5 | sed 's/^/    /'
+    issues=$((issues + 1))
+  fi
+  local dupes
+  dupes="$(grep -E '^- ' "$f" | grep -v '^- …$' | sort | uniq -d || true)"
+  if [ -n "$dupes" ]; then
+    printf '  %s·%s duplicate bullets:\n' "$PINK" "$RESET"
+    printf '%s\n' "$dupes" | head -5 | sed 's/^/    /'
+    issues=$((issues + 1))
+  fi
+  if ! head -1 "$f" | grep -q '^---$'; then
+    printf '  %s·%s missing YAML frontmatter\n' "$PINK" "$RESET"
+    issues=$((issues + 1))
+  fi
+
+  if [ $issues -eq 0 ]; then
+    ok "preferences.md: clean"
+    return 0
+  fi
+  [ $warn_only -eq 1 ] && return 0
+  return 1
+}
+
+cmd_save() {
+  local message="" quiet=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --quiet)     quiet=1; shift ;;
+      --if-dirty)  shift ;;   # accepted for clarity; save is already a no-op when clean
+      -m)          message="${2:-}"; shift 2 ;;
+      *)           message="$1"; shift ;;
+    esac
+  done
+  [ -d "$MARLOWE_HOME/.git" ] || die "no git in $MARLOWE_HOME — run 'marlowe init'"
+
+  # Lint, warn only — don't block saves on stylistic issues.
+  cmd_lint --warn-only >/dev/null 2>&1 || true
+
+  if [ -z "$(git -C "$MARLOWE_HOME" status --porcelain 2>/dev/null)" ]; then
+    [ $quiet -eq 0 ] && say "nothing to save"
+  else
+    local msg="${message:-update preferences}"
+    git -C "$MARLOWE_HOME" add -A
+    git -C "$MARLOWE_HOME" -c commit.gpgsign=false commit -q -m "$msg"
+    [ $quiet -eq 0 ] && ok "committed: $msg"
+  fi
+
+  # Push — best effort. Offline / no-remote => warn and continue.
+  if git -C "$MARLOWE_HOME" remote get-url origin >/dev/null 2>&1; then
+    local branch
+    branch="$(git -C "$MARLOWE_HOME" rev-parse --abbrev-ref HEAD)"
+    if git -C "$MARLOWE_HOME" push -q origin "$branch" 2>/dev/null; then
+      [ $quiet -eq 0 ] && ok "pushed origin/$branch"
+    else
+      say "push failed (offline?) — will retry on next save"
+    fi
+  fi
+
+  # Re-apply adapters so the tools see the new state.
+  for a in "$MARLOWE_FRAMEWORK"/adapters/*/apply.sh; do
+    local tool
+    tool="$(basename "$(dirname "$a")")"
+    [ -d "$HOME/.$tool" ] && "$a" >/dev/null
+  done
+}
+
+cmd_add() {
+  local type="${1:-}"; shift || true
+  local content="$*"
+  case "$type" in
+    lingo|ai-lingo|preference|project) ;;
+    *) die "usage: marlowe add <lingo|ai-lingo|preference|project> <text…>" ;;
+  esac
+  [ -n "$content" ] || die "missing content"
+
+  local f="$MARLOWE_HOME/preferences.md"
+  [ -f "$f" ] || die "no preferences.md — run 'marlowe init'"
+
+  local section
+  case "$type" in
+    lingo)      section='## Lingo I use' ;;
+    ai-lingo)   section='## Lingo I want the AI to use' ;;
+    preference) section='## Standing preferences' ;;
+    project)    section="## Projects I'm working on" ;;
+  esac
+
+  awk -v s="$section" -v line="- $content" '
+    BEGIN { inside = 0; inserted = 0 }
+    {
+      if ($0 == s) { inside = 1; print; next }
+      if (inside && !inserted && /^## / && $0 != s) {
+        print line; inserted = 1; inside = 0; print; next
+      }
+      if (inside && !inserted && $0 == "- …") {
+        print line; inserted = 1; next
+      }
+      print
+    }
+    END { if (inside && !inserted) print line }
+  ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+
+  ok "added to $type: $content"
+  cmd_save "add $type: $content" --quiet
+}
+
+cmd_edit() {
+  local f="$MARLOWE_HOME/preferences.md"
+  [ -f "$f" ] || die "no preferences.md — run 'marlowe init'"
+  local before after
+  before="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)"
+  "${EDITOR:-vi}" "$f"
+  after="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)"
+  if [ "$before" != "$after" ]; then
+    if confirm "save changes (commit + push + re-apply)?"; then
+      cmd_save "edit preferences"
+    else
+      say "skipped save — run 'marlowe save' when ready"
+    fi
+  fi
 }
 
 _repo_state() {
@@ -253,11 +382,16 @@ cmd_help() {
   cat <<EOF
 marlowe — portable AI context
 
-  init [--force]    interactive setup wizard
-  status            one-glance health check
-  sync              pull private repo, re-apply all adapters
-  edit              open preferences.md in \$EDITOR
-  apply <tool>      re-run one adapter (claude | codex | cursor)
+  init [--force]              interactive setup wizard
+  status                      one-glance health check
+  add <type> <text…>          append a structured entry
+                                types: lingo | ai-lingo | preference | project
+                                auto-commits + pushes
+  edit                        open preferences.md in \$EDITOR; offers auto-save
+  save [-m <msg>]             commit + push + re-apply adapters (no-op if clean)
+  lint [--warn-only]          validate preferences.md
+  sync                        pull private repo, re-apply all adapters
+  apply <tool>                re-run one adapter (claude | codex | cursor)
 EOF
 }
 
@@ -265,8 +399,11 @@ cmd="${1:-help}"; shift || true
 case "$cmd" in
   init)   cmd_init   "$@" ;;
   status) cmd_status "$@" ;;
-  sync)   cmd_sync   "$@" ;;
+  add)    cmd_add    "$@" ;;
   edit)   cmd_edit   "$@" ;;
+  save)   cmd_save   "$@" ;;
+  lint)   cmd_lint   "$@" ;;
+  sync)   cmd_sync   "$@" ;;
   apply)  cmd_apply  "$@" ;;
   help|*) cmd_help ;;
 esac
