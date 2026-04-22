@@ -155,11 +155,106 @@ cmd_apply() {
   "$MARLOWE_FRAMEWORK/adapters/$tool/apply.sh"
 }
 
+_repo_state() {
+  # echoes short git state: "<short-sha> (<branch>, <clean|dirty>[, ahead N][, behind N])"
+  local d="$1"
+  [ -d "$d/.git" ] || { printf 'no git'; return; }
+  local sha branch dirty ahead behind
+  sha="$(git -C "$d" rev-parse --short HEAD 2>/dev/null || echo '?')"
+  branch="$(git -C "$d" rev-parse --abbrev-ref HEAD 2>/dev/null || echo '?')"
+  [ -z "$(git -C "$d" status --porcelain 2>/dev/null)" ] && dirty='clean' || dirty='dirty'
+  local out="$sha ($branch, $dirty"
+  if git -C "$d" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
+    ahead="$(git -C "$d"  rev-list --count '@{u}..HEAD' 2>/dev/null || echo 0)"
+    behind="$(git -C "$d" rev-list --count 'HEAD..@{u}' 2>/dev/null || echo 0)"
+    [ "$ahead"  -gt 0 ] && out="$out, ahead $ahead"
+    [ "$behind" -gt 0 ] && out="$out, behind $behind"
+  fi
+  printf '%s)' "$out"
+}
+
+_mtime_ago() {
+  # echoes "Nm ago" or "Nh ago" or "Nd ago"; empty if file missing
+  local f="$1" m now diff
+  [ -f "$f" ] || { printf ''; return; }
+  m="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)"
+  now="$(date +%s)"; diff=$((now - m))
+  if   [ $diff -lt 60 ];    then printf '%ds ago' "$diff"
+  elif [ $diff -lt 3600 ];  then printf '%dm ago' $((diff/60))
+  elif [ $diff -lt 86400 ]; then printf '%dh ago' $((diff/3600))
+  else                           printf '%dd ago' $((diff/86400))
+  fi
+}
+
+_has_marlowe_block() {
+  grep -q '<!-- marlowe:begin -->' "$1" 2>/dev/null
+}
+
+cmd_status() {
+  printf '%s⟡ marlowe status%s\n\n' "$PINK" "$RESET"
+
+  # Identity
+  local prefs="$MARLOWE_HOME/preferences.md"
+  if [ -f "$prefs" ]; then
+    local user_name assistant_name
+    user_name="$(awk -F': *'      '/^[[:space:]]*user_name:/      {print $2; exit}' "$prefs")"
+    assistant_name="$(awk -F': *' '/^[[:space:]]*assistant_name:/ {print $2; exit}' "$prefs")"
+    printf '%sidentity%s   %s · %s\n'    "$DIM" "$RESET" "${user_name:-?}" "${assistant_name:-?}"
+  else
+    printf '%sidentity%s   %snot initialized%s — run: marlowe init\n' "$DIM" "$RESET" "$PINK" "$RESET"
+  fi
+
+  # Data repo
+  printf '%sdata%s       %s  %s\n' \
+    "$DIM" "$RESET" "$MARLOWE_HOME" "$(_repo_state "$MARLOWE_HOME")"
+
+  # Framework
+  printf '%sframework%s  %s  %s\n' \
+    "$DIM" "$RESET" "$MARLOWE_FRAMEWORK" "$(_repo_state "$MARLOWE_FRAMEWORK")"
+
+  # Adapters
+  printf '\n%sadapters%s\n' "$DIM" "$RESET"
+  local mark path ago
+  # claude
+  path="$HOME/.claude/CLAUDE.md"
+  if _has_marlowe_block "$path"; then
+    ago="$(_mtime_ago "$path")"
+    printf '  %s✓%s claude    %s  (%s)\n' "$PINK" "$RESET" "$path" "$ago"
+  else
+    printf '  %s·%s claude    not applied\n' "$DIM" "$RESET"
+  fi
+  # codex
+  path="$HOME/.codex/AGENTS.md"
+  if _has_marlowe_block "$path"; then
+    ago="$(_mtime_ago "$path")"
+    printf '  %s✓%s codex     %s  (%s)\n' "$PINK" "$RESET" "$path" "$ago"
+  else
+    printf '  %s·%s codex     not applied\n' "$DIM" "$RESET"
+  fi
+  # cursor (rendered, not auto-injected)
+  path="$MARLOWE_HOME/generated/cursor-rules.md"
+  if [ -f "$path" ]; then
+    ago="$(_mtime_ago "$path")"
+    printf '  %s⊙%s cursor    %s  (%s, paste manually)\n' "$PINK" "$RESET" "$path" "$ago"
+  else
+    printf '  %s·%s cursor    not rendered\n' "$DIM" "$RESET"
+  fi
+
+  # Claude statusLine wiring
+  printf '\n%sstatusline%s '"$DIM"'(Claude Code)'"$RESET"'  ' "$DIM" "$RESET"
+  if grep -q 'statusline\.sh' "$HOME/.claude/settings.json" 2>/dev/null; then
+    printf '%s✓%s wired\n' "$PINK" "$RESET"
+  else
+    printf '%s·%s not wired — see README\n' "$DIM" "$RESET"
+  fi
+}
+
 cmd_help() {
   cat <<EOF
 marlowe — portable AI context
 
   init [--force]    interactive setup wizard
+  status            one-glance health check
   sync              pull private repo, re-apply all adapters
   edit              open preferences.md in \$EDITOR
   apply <tool>      re-run one adapter (claude | codex | cursor)
@@ -168,9 +263,10 @@ EOF
 
 cmd="${1:-help}"; shift || true
 case "$cmd" in
-  init)  cmd_init  "$@" ;;
-  sync)  cmd_sync  "$@" ;;
-  edit)  cmd_edit  "$@" ;;
-  apply) cmd_apply "$@" ;;
+  init)   cmd_init   "$@" ;;
+  status) cmd_status "$@" ;;
+  sync)   cmd_sync   "$@" ;;
+  edit)   cmd_edit   "$@" ;;
+  apply)  cmd_apply  "$@" ;;
   help|*) cmd_help ;;
 esac
