@@ -178,6 +178,20 @@ cmd_lint() {
     issues=$((issues + 1))
   fi
 
+  # Drift: adapted files should contain the current capture protocol block.
+  # If a marlowe:begin marker exists but the block doesn't, the apply is stale.
+  for pair in "claude:$HOME/.claude/CLAUDE.md" "codex:$HOME/.codex/AGENTS.md"; do
+    local tool dest
+    tool="${pair%%:*}"; dest="${pair#*:}"
+    if [ -f "$dest" ] && grep -q '<!-- marlowe:begin -->' "$dest" 2>/dev/null; then
+      if ! grep -q '^# Capture protocol' "$dest" 2>/dev/null; then
+        printf '  %s·%s %s is stale (no capture protocol) — run: marlowe apply %s\n' \
+          "$PINK" "$RESET" "$dest" "$tool"
+        issues=$((issues + 1))
+      fi
+    fi
+  done
+
   if [ $issues -eq 0 ]; then
     ok "preferences.md: clean"
     return 0

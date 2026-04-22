@@ -13,12 +13,28 @@ mkdir -p "$OUT_DIR"
   MARLOWE_HOME="$MARLOWE_HOME" "$MARLOWE_FRAMEWORK/adapters/common/render.sh"
 } > "$OUT"
 
+echo "[marlowe/cursor] rendered rules -> $OUT"
+
+# Cursor's User Rules are UI-stored, not file-based. Best we can do is make
+# the paste step painless by pre-filling the clipboard.
+COPIED=""
+if   command -v wl-copy  >/dev/null 2>&1; then wl-copy  < "$OUT" && COPIED="wl-copy"
+elif command -v xclip    >/dev/null 2>&1; then xclip -selection clipboard < "$OUT" && COPIED="xclip"
+elif command -v xsel     >/dev/null 2>&1; then xsel --clipboard --input  < "$OUT" && COPIED="xsel"
+elif command -v pbcopy   >/dev/null 2>&1; then pbcopy   < "$OUT" && COPIED="pbcopy"
+fi
+
+if [ -n "$COPIED" ]; then
+  echo "[marlowe/cursor] copied to clipboard ($COPIED) — ready to paste"
+else
+  echo "[marlowe/cursor] no clipboard tool (wl-copy/xclip/xsel/pbcopy) — copy manually"
+fi
+
 cat <<EOF
-[marlowe/cursor] rendered rules -> $OUT
 
 To apply in Cursor:
   1. open Cursor → Settings (Cmd/Ctrl + ,)
   2. search "Rules for AI"
-  3. paste the content of $OUT
-  4. re-run 'marlowe sync' after editing ~/.marlowe/preferences.md, then paste again
+  3. paste${COPIED:+ (clipboard is ready)}
+  4. re-run 'marlowe apply cursor' after editing preferences.md, then paste again
 EOF

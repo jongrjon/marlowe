@@ -40,3 +40,19 @@ Codex will truncate. Raise the limit in ~/.codex/config.toml:
   project_doc_max_bytes = $(( (SIZE / 1024 + 4) * 1024 ))
 EOF
 fi
+
+# Capture protocol needs Codex to execute `marlowe remember` / `marlowe add`
+# itself. Codex's default sandbox blocks writes outside the current workspace,
+# which breaks writes to ~/.marlowe/. Hint at the config if it's not set.
+CONFIG="$HOME/.codex/config.toml"
+if [ ! -f "$CONFIG" ] || ! grep -Eq '^[[:space:]]*sandbox_mode[[:space:]]*=' "$CONFIG" 2>/dev/null; then
+  cat <<EOF
+[marlowe/codex] hint: capture protocol needs Codex to run shell commands that
+  write outside the workspace (marlowe remember / add touch ~/.marlowe/).
+  Default sandbox blocks this. In ~/.codex/config.toml consider:
+
+    sandbox_mode = "workspace-write"
+    [sandbox_workspace_write]
+    writable_roots = ["~/.marlowe"]
+EOF
+fi
