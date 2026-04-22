@@ -19,21 +19,14 @@ fi
 
 printf '\n\n'
 cat <<'EOF'
-# Capture protocol
+# Capture
 
-Marlowe persists cross-session context. When I give you something durable,
-run the matching command yourself — don't ask first, confirm in one line after.
+On explicit cues, run the command yourself (one-line confirm, no ask):
+- "remember X" / "note X"       → `marlowe remember "X"`
+- "from now on X" / "always X"  → `marlowe add preference "X"`
+- "X means Y"                   → `marlowe add lingo "X — Y"`
+- "say X / use X tone"          → `marlowe add ai-lingo "X"`
+- "working on X"                → `marlowe add project "X"`
 
-| I say…                                       | You run                               |
-|----------------------------------------------|---------------------------------------|
-| "remember X" / "don't forget X" / "note X"   | `marlowe remember "X"`                |
-| "from now on X" / "always X" / "never X"     | `marlowe add preference "X"`          |
-| "X means Y" / "when I say X I mean Y"        | `marlowe add lingo "X — Y"`           |
-| "say X instead of Y" / "use X tone"          | `marlowe add ai-lingo "X"`            |
-| "I'm working on X" / "new project: X"        | `marlowe add project "X"`             |
-
-Rules:
-- Explicit cue only — don't guess what's memory-worthy from stray mentions.
-- These commands commit + push automatically; no extra step.
-- `marlowe` is on your PATH.
+Explicit cue only. `marlowe` is on PATH; auto-commits.
 EOF

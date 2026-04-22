@@ -95,20 +95,17 @@ trap 'marlowe save --if-dirty --quiet 2>/dev/null' EXIT
 
 ## Capture protocol
 
-Inject is half the loop — capture is the other half. Marlowe's capture layer
-doesn't use per-tool hooks; instead, every adapter injects a small protocol
-block that tells the AI when to call `marlowe remember` / `marlowe add` itself.
+Inject is half the loop — capture is the other half. Every adapter injects a
+small block that tells the AI when to run `marlowe remember` / `marlowe add`
+itself. No per-tool hooks, no daemons.
 
-| You say…                                     | AI runs                               |
-|----------------------------------------------|---------------------------------------|
-| "remember X" / "don't forget X"              | `marlowe remember "X"`                |
-| "from now on X" / "always/never X"           | `marlowe add preference "X"`          |
-| "X means Y" (personal shorthand)             | `marlowe add lingo "X — Y"`           |
-| "say X instead of Y" / "use X tone"          | `marlowe add ai-lingo "X"`            |
-| "working on X" / "new project: X"            | `marlowe add project "X"`             |
+- "remember X" / "note X"       → `marlowe remember "X"`
+- "from now on X" / "always X"  → `marlowe add preference "X"`
+- "X means Y"                   → `marlowe add lingo "X — Y"`
+- "say X / use X tone"          → `marlowe add ai-lingo "X"`
+- "working on X"                → `marlowe add project "X"`
 
-Works on any tool that can shell out — so Claude Code, Codex, and any future
-adapter get capture for free. Auto-commits + pushes.
+Explicit cue only. Auto-commits + pushes. Works on any tool that can shell out.
 
 ## Status
 

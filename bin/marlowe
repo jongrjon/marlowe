@@ -370,6 +370,24 @@ _has_marlowe_block() {
   grep -q '<!-- marlowe:begin -->' "$1" 2>/dev/null
 }
 
+_block_bytes() {
+  # Emit byte count of the marlowe:begin..marlowe:end region of $1, or 0.
+  [ -f "$1" ] || { printf '0'; return; }
+  awk '
+    /<!-- marlowe:begin -->/ {inside=1}
+    inside { len += length($0) + 1 }
+    /<!-- marlowe:end -->/   {print len; exit}
+  ' "$1" 2>/dev/null || printf '0'
+}
+
+_budget_marker() {
+  # Given byte count, emit a pink "!" or "!!" based on soft/hard thresholds.
+  local n="$1"
+  if   [ "$n" -gt 32768 ]; then printf ' %s!!%s hard' "$PINK" "$RESET"
+  elif [ "$n" -gt 8192  ]; then printf ' %s!%s heavy' "$PINK" "$RESET"
+  fi
+}
+
 cmd_status() {
   printf '%s⟡ marlowe status%s\n\n' "$PINK" "$RESET"
 
@@ -392,14 +410,16 @@ cmd_status() {
   printf '%sframework%s  %s  %s\n' \
     "$DIM" "$RESET" "$MARLOWE_FRAMEWORK" "$(_repo_state "$MARLOWE_FRAMEWORK")"
 
-  # Adapters
+  # Adapters — show block byte count (what the AI actually pays for per session)
   printf '\n%sadapters%s\n' "$DIM" "$RESET"
-  local mark path ago
+  local path ago size
   # claude
   path="$HOME/.claude/CLAUDE.md"
   if _has_marlowe_block "$path"; then
     ago="$(_mtime_ago "$path")"
-    printf '  %s✓%s claude    %s  (%s)\n' "$PINK" "$RESET" "$path" "$ago"
+    size="$(_block_bytes "$path")"
+    printf '  %s✓%s claude    %s  (%s, %dB block)%s\n' \
+      "$PINK" "$RESET" "$path" "$ago" "$size" "$(_budget_marker "$size")"
   else
     printf '  %s·%s claude    not applied\n' "$DIM" "$RESET"
   fi
@@ -407,20 +427,19 @@ cmd_status() {
   path="$HOME/.codex/AGENTS.md"
   if _has_marlowe_block "$path"; then
     ago="$(_mtime_ago "$path")"
-    local codex_size codex_warn
-    codex_size="$(wc -c < "$path")"
-    codex_warn=""
-    [ "$codex_size" -gt 32768 ] && codex_warn=" ${PINK}!${RESET} exceeds 32K default"
-    printf '  %s✓%s codex     %s  (%s, %dB)%s\n' \
-      "$PINK" "$RESET" "$path" "$ago" "$codex_size" "$codex_warn"
+    size="$(_block_bytes "$path")"
+    printf '  %s✓%s codex     %s  (%s, %dB block)%s\n' \
+      "$PINK" "$RESET" "$path" "$ago" "$size" "$(_budget_marker "$size")"
   else
     printf '  %s·%s codex     not applied\n' "$DIM" "$RESET"
   fi
-  # cursor (rendered, not auto-injected)
+  # cursor (rendered file, paste-manually — whole file IS the block)
   path="$MARLOWE_HOME/generated/cursor-rules.md"
   if [ -f "$path" ]; then
     ago="$(_mtime_ago "$path")"
-    printf '  %s⊙%s cursor    %s  (%s, paste manually)\n' "$PINK" "$RESET" "$path" "$ago"
+    size="$(wc -c < "$path")"
+    printf '  %s⊙%s cursor    %s  (%s, %dB, paste manually)%s\n' \
+      "$PINK" "$RESET" "$path" "$ago" "$size" "$(_budget_marker "$size")"
   else
     printf '  %s·%s cursor    not rendered\n' "$DIM" "$RESET"
   fi
