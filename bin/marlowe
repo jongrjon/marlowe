@@ -242,7 +242,7 @@ cmd_status() {
 
   # Claude statusLine wiring
   printf '\n%sstatusline%s '"$DIM"'(Claude Code)'"$RESET"'  ' "$DIM" "$RESET"
-  if grep -q 'statusline\.sh' "$HOME/.claude/settings.json" 2>/dev/null; then
+  if grep -Eq 'marlowe.*statusline|statusline[-.]' "$HOME/.claude/settings.json" 2>/dev/null; then
     printf '%s✓%s wired\n' "$PINK" "$RESET"
   else
     printf '%s·%s not wired — see README\n' "$DIM" "$RESET"
