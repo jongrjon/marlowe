@@ -4,30 +4,173 @@ set -euo pipefail
 MARLOWE_HOME="${MARLOWE_HOME:-$HOME/.marlowe}"
 MARLOWE_FRAMEWORK="${MARLOWE_FRAMEWORK:-$HOME/.marlowe-framework}"
 
-cmd="${1:-help}"; shift || true
+PINK=$'\033[38;2;254;1;154m'
+DIM=$'\033[2m'
+BOLD=$'\033[1m'
+RESET=$'\033[0m'
 
-case "$cmd" in
-  sync)
+say()  { printf '%s⟡ marlowe%s %s\n' "$PINK" "$RESET" "$*"; }
+ok()   { printf '  %s✓%s %s\n' "$PINK" "$RESET" "$*"; }
+step() { printf '\n%s%s%s\n' "$BOLD" "$*" "$RESET"; }
+die()  { printf '%s⟡ marlowe%s %s\n' "$PINK" "$RESET" "$*" >&2; exit 1; }
+
+ask() {
+  # ask <prompt> <default>  → echoes the answer
+  local prompt="$1" default="${2:-}" reply
+  if [ -n "$default" ]; then
+    read -rp "  $prompt [$default]: " reply
+    printf '%s' "${reply:-$default}"
+  else
+    read -rp "  $prompt: " reply
+    printf '%s' "$reply"
+  fi
+}
+
+confirm() {
+  # confirm <prompt>  → returns 0 for yes
+  local reply
+  read -rp "  $1 [Y/n]: " reply
+  case "${reply:-Y}" in Y|y|yes|YES) return 0 ;; *) return 1 ;; esac
+}
+
+cmd_init() {
+  local force=0
+  [ "${1:-}" = "--force" ] && force=1
+
+  if [ -f "$MARLOWE_HOME/preferences.md" ] && [ $force -eq 0 ]; then
+    die "already initialized at $MARLOWE_HOME. use 'marlowe edit' or re-run with --force."
+  fi
+
+  say "init wizard"
+
+  # 1. Identity
+  step "1/4  Identity"
+  local user_name assistant_name
+  user_name="$(ask 'your name' "$(whoami)")"
+  assistant_name="$(ask 'assistant name' 'Marlowe')"
+
+  # 2. Data repo
+  step "2/4  Data repo"
+  echo "  marlowe keeps your preferences in a private git repo."
+  echo "    (a) clone existing URL"
+  echo "    (b) create new private GitHub repo via 'gh'"
+  echo "    (c) start empty (no remote — add one later)"
+  local choice data_url new_slug
+  choice="$(ask 'choice (a/b/c)' 'c')"
+  case "$choice" in
+    a) data_url="$(ask 'repo URL')" ;;
+    b)
+      command -v gh >/dev/null || die "'gh' not found on PATH"
+      new_slug="$(ask 'new repo slug (e.g. you/marlowe-data)')"
+      ;;
+    c) : ;;
+    *) die "invalid choice: $choice" ;;
+  esac
+
+  # 3. Tools
+  step "3/4  Tools"
+  local tools=()
+  for t in claude codex cursor; do
+    local dir="$HOME/.$t"
+    if [ -d "$dir" ]; then
+      confirm "apply $t adapter (~/.$t detected)" && tools+=("$t")
+    else
+      confirm "apply $t adapter (~/.$t not detected — force)" && tools+=("$t") || true
+    fi
+  done
+
+  # 4. Summary
+  step "4/4  Summary"
+  echo "  identity:  $user_name / $assistant_name"
+  echo "  data repo: $(case "$choice" in a) echo "clone $data_url";; b) echo "create $new_slug (private)";; c) echo "empty, no remote";; esac)"
+  echo "  adapters:  ${tools[*]:-<none>}"
+  confirm "proceed" || die "aborted."
+
+  # Execute
+  mkdir -p "$MARLOWE_HOME"
+  case "$choice" in
+    a)
+      git clone "$data_url" "$MARLOWE_HOME"
+      ok "cloned $data_url"
+      ;;
+    b)
+      git -C "$MARLOWE_HOME" init -q -b main
+      cp "$MARLOWE_FRAMEWORK/templates/preferences.md" "$MARLOWE_HOME/preferences.md"
+      _substitute_identity "$user_name" "$assistant_name"
+      printf 'generated/\n' > "$MARLOWE_HOME/.gitignore"
+      git -C "$MARLOWE_HOME" add .
+      git -C "$MARLOWE_HOME" -c commit.gpgsign=false commit -q -m "init marlowe data"
+      gh repo create "$new_slug" --private --source="$MARLOWE_HOME" --remote=origin --push \
+        --description "Marlowe private context"
+      ok "created private repo $new_slug and pushed"
+      ;;
+    c)
+      git -C "$MARLOWE_HOME" init -q -b main
+      cp "$MARLOWE_FRAMEWORK/templates/preferences.md" "$MARLOWE_HOME/preferences.md"
+      _substitute_identity "$user_name" "$assistant_name"
+      printf 'generated/\n' > "$MARLOWE_HOME/.gitignore"
+      ok "started empty repo at $MARLOWE_HOME"
+      ;;
+  esac
+
+  # Ensure preferences.md carries the identity (clone path may skip substitution if
+  # the repo already has tokens resolved).
+  if grep -q '__USER_NAME__' "$MARLOWE_HOME/preferences.md" 2>/dev/null; then
+    _substitute_identity "$user_name" "$assistant_name"
+    ok "substituted identity into preferences.md"
+  fi
+
+  for t in "${tools[@]}"; do
+    "$MARLOWE_FRAMEWORK/adapters/$t/apply.sh"
+  done
+
+  step "done"
+  cat <<EOF
+  edit preferences:  marlowe edit
+  re-apply all:      marlowe sync
+  re-apply one:      marlowe apply <tool>
+EOF
+}
+
+_substitute_identity() {
+  local u="$1" a="$2"
+  local f="$MARLOWE_HOME/preferences.md"
+  sed -i.bak -e "s|__USER_NAME__|$u|g" -e "s|__ASSISTANT_NAME__|$a|g" "$f"
+  rm -f "$f.bak"
+}
+
+cmd_sync() {
+  if [ -d "$MARLOWE_HOME/.git" ]; then
     git -C "$MARLOWE_HOME" pull --ff-only 2>/dev/null || true
-    for a in "$MARLOWE_FRAMEWORK"/adapters/*/apply.sh; do
-      tool="$(basename "$(dirname "$a")")"
-      [ -d "$HOME/.$tool" ] && "$a"
-    done
-    ;;
-  edit)
-    "${EDITOR:-vi}" "$MARLOWE_HOME/preferences.md"
-    ;;
-  apply)
-    tool="${1:?usage: marlowe apply <claude|codex|cursor>}"
-    "$MARLOWE_FRAMEWORK/adapters/$tool/apply.sh"
-    ;;
-  help|*)
-    cat <<EOF
+  fi
+  for a in "$MARLOWE_FRAMEWORK"/adapters/*/apply.sh; do
+    tool="$(basename "$(dirname "$a")")"
+    [ -d "$HOME/.$tool" ] && "$a"
+  done
+}
+
+cmd_edit()  { "${EDITOR:-vi}" "$MARLOWE_HOME/preferences.md"; }
+cmd_apply() {
+  local tool="${1:?usage: marlowe apply <claude|codex|cursor>}"
+  "$MARLOWE_FRAMEWORK/adapters/$tool/apply.sh"
+}
+
+cmd_help() {
+  cat <<EOF
 marlowe — portable AI context
 
+  init [--force]    interactive setup wizard
   sync              pull private repo, re-apply all adapters
   edit              open preferences.md in \$EDITOR
   apply <tool>      re-run one adapter (claude | codex | cursor)
 EOF
-    ;;
+}
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  init)  cmd_init  "$@" ;;
+  sync)  cmd_sync  "$@" ;;
+  edit)  cmd_edit  "$@" ;;
+  apply) cmd_apply "$@" ;;
+  help|*) cmd_help ;;
 esac

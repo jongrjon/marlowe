@@ -11,22 +11,46 @@ Portable AI context across tools. Write your preferences, lingo, and identity on
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/<you>/marlowe/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/jongrjon/marlowe/main/install.sh | sh
 ```
 
-The installer will:
-1. Clone this framework to `~/.marlowe-framework/`.
-2. Prompt for your private data repo URL (or help you create one).
-3. Clone it to `~/.marlowe/`.
-4. Run adapters for every AI tool it detects on your machine.
+The installer clones the framework to `~/.marlowe-framework/`, puts `marlowe` on your PATH, and hands off to `marlowe init`.
+
+## `marlowe init` — interactive wizard
+
+```
+⟡ marlowe init
+
+1/4  Identity
+  your name [jhek]: Jón Helgi
+  assistant name [Marlowe]: BlíBlú
+
+2/4  Data repo
+    (a) clone existing URL
+    (b) create new private GitHub repo via 'gh'
+    (c) start empty (no remote — add one later)
+  choice (a/b/c) [c]: b
+  new repo slug (e.g. you/marlowe-data): jongrjon/marlowe-data
+
+3/4  Tools
+  apply claude adapter (~/.claude detected) [Y/n]: y
+  apply codex  adapter (~/.codex  detected) [Y/n]: y
+  apply cursor adapter (~/.cursor detected) [Y/n]: y
+
+4/4  Summary
+  identity:  Jón Helgi / BlíBlú
+  data repo: create jongrjon/marlowe-data (private)
+  adapters:  claude codex cursor
+  proceed [Y/n]: y
+```
 
 ## Usage
 
 ```sh
-marlowe init          # one-time setup
-marlowe sync          # git pull the private repo, re-apply adapters
-marlowe add-tool X    # enable adapter for X (claude | codex | cursor)
-marlowe edit          # open preferences.md in $EDITOR
+marlowe init [--force]   first-time setup
+marlowe sync             pull private repo, re-apply every detected adapter
+marlowe edit             open preferences.md in $EDITOR
+marlowe apply <tool>     re-run one adapter (claude | codex | cursor)
 ```
 
 ## Supported tools (v0.1)
