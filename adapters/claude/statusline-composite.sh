@@ -11,8 +11,8 @@ pai_out=""
 marlowe_out=""
 [ -x "$MARLOWE_SL" ] && marlowe_out="$("$MARLOWE_SL" 2>/dev/null || true)"
 
-if [ -n "$pai_out" ] && [ -n "$marlowe_out" ]; then
-  printf '%s  %s' "$pai_out" "$marlowe_out"
+if [ -n "$marlowe_out" ] && [ -n "$pai_out" ]; then
+  printf '%s\n%s' "$marlowe_out" "$pai_out"
 else
-  printf '%s%s' "$pai_out" "$marlowe_out"
+  printf '%s%s' "$marlowe_out" "$pai_out"
 fi
