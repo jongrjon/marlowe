@@ -2,13 +2,12 @@
 set -euo pipefail
 
 MARLOWE_HOME="${MARLOWE_HOME:-$HOME/.marlowe}"
-SRC="$MARLOWE_HOME/preferences.md"
+MARLOWE_FRAMEWORK="${MARLOWE_FRAMEWORK:-$HOME/.marlowe-framework}"
 DST="$HOME/.codex/AGENTS.md"
 
 BEGIN='<!-- marlowe:begin -->'
 END='<!-- marlowe:end -->'
 
-[ -f "$SRC" ] || { echo "no preferences.md at $SRC" >&2; exit 1; }
 mkdir -p "$(dirname "$DST")"
 touch "$DST"
 
@@ -22,9 +21,9 @@ awk -v b="$BEGIN" -v e="$END" '
   cat "$DST.tmp"
   printf '\n%s\n' "$BEGIN"
   echo "<!-- managed by marlowe; edit ~/.marlowe/preferences.md instead -->"
-  cat "$SRC"
+  MARLOWE_HOME="$MARLOWE_HOME" "$MARLOWE_FRAMEWORK/adapters/common/render.sh"
   printf '%s\n' "$END"
 } > "$DST"
 
 rm -f "$DST.tmp"
-echo "[marlowe/codex] applied preferences.md -> $DST"
+echo "[marlowe/codex] applied -> $DST"

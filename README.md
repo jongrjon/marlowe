@@ -52,6 +52,7 @@ marlowe status                one-glance health check
 marlowe add <type> <text…>    append a structured entry (auto-commits + pushes)
                               types: lingo | ai-lingo | preference | project
 marlowe edit                  open preferences.md in $EDITOR; offers auto-save
+marlowe remember <fact…>      append a dated bullet to memory.md (auto-commits + pushes)
 marlowe save [-m <msg>]       commit + push + re-apply (no-op if clean)
 marlowe lint                  validate preferences.md
 marlowe sync                  pull from origin, re-apply adapters

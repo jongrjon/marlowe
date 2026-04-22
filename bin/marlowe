@@ -268,6 +268,20 @@ cmd_add() {
   cmd_save "add $type: $content" --quiet
 }
 
+cmd_remember() {
+  local fact="$*"
+  [ -n "$fact" ] || die "usage: marlowe remember \"<fact>\""
+  local f="$MARLOWE_HOME/memory.md"
+  if [ ! -f "$f" ]; then
+    printf '# Memory\n\n' > "$f"
+  fi
+  local date_str
+  date_str="$(date +%Y-%m-%d)"
+  printf -- '- [%s] %s\n' "$date_str" "$fact" >> "$f"
+  ok "remembered: $fact"
+  cmd_save "remember: $fact" --quiet
+}
+
 cmd_edit() {
   local f="$MARLOWE_HOME/preferences.md"
   [ -f "$f" ] || die "no preferences.md — run 'marlowe init'"
@@ -369,6 +383,16 @@ cmd_status() {
     printf '  %s·%s cursor    not rendered\n' "$DIM" "$RESET"
   fi
 
+  # Memory
+  printf '\n%smemory%s     ' "$DIM" "$RESET"
+  if [ -f "$MARLOWE_HOME/memory.md" ]; then
+    local mem_count
+    mem_count="$(grep -cE '^- \[' "$MARLOWE_HOME/memory.md" 2>/dev/null || echo 0)"
+    printf '%s entries  %s\n' "$mem_count" "$MARLOWE_HOME/memory.md"
+  else
+    printf '%s·%s none\n' "$DIM" "$RESET"
+  fi
+
   # Claude statusLine wiring
   printf '\n%sstatusline%s '"$DIM"'(Claude Code)'"$RESET"'  ' "$DIM" "$RESET"
   if grep -Eq 'marlowe.*statusline|statusline[-.]' "$HOME/.claude/settings.json" 2>/dev/null; then
@@ -388,6 +412,7 @@ marlowe — portable AI context
                                 types: lingo | ai-lingo | preference | project
                                 auto-commits + pushes
   edit                        open preferences.md in \$EDITOR; offers auto-save
+  remember <fact…>            append a dated bullet to memory.md (auto-commits + pushes)
   save [-m <msg>]             commit + push + re-apply adapters (no-op if clean)
   lint [--warn-only]          validate preferences.md
   sync                        pull private repo, re-apply all adapters
@@ -399,9 +424,10 @@ cmd="${1:-help}"; shift || true
 case "$cmd" in
   init)   cmd_init   "$@" ;;
   status) cmd_status "$@" ;;
-  add)    cmd_add    "$@" ;;
-  edit)   cmd_edit   "$@" ;;
-  save)   cmd_save   "$@" ;;
+  add)      cmd_add      "$@" ;;
+  edit)     cmd_edit     "$@" ;;
+  remember) cmd_remember "$@" ;;
+  save)     cmd_save     "$@" ;;
   lint)   cmd_lint   "$@" ;;
   sync)   cmd_sync   "$@" ;;
   apply)  cmd_apply  "$@" ;;
