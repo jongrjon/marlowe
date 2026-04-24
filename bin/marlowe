@@ -671,6 +671,122 @@ cmd_remember() {
   cmd_save "remember: $fact" --quiet
 }
 
+_smart_review() {
+  # Smart-review core: LLM proposes a revised memory.md that (a) integrates
+  # drafts + recent activity-extracted bullets as new entries, (b) tags
+  # untagged entries, (c) culls obsolete/duplicate/test-fixture entries.
+  # The user reviews the complete proposal in $EDITOR before it replaces
+  # memory.md atomically. AI does the hard work; user has easy veto.
+  local drafts="$1" activities="$2" memory="$3" yes_mode="$4"
+
+  local drafts_content=""
+  [ -f "$drafts" ] && drafts_content="$(grep -E '^- ' "$drafts" 2>/dev/null || true)"
+
+  local recent=""
+  [ -f "$activities" ] && recent="$(tail -50 "$activities" 2>/dev/null || true)"
+
+  local today
+  today="$(date +%Y-%m-%d)"
+
+  say "running audit pass via claude — ~10-20s..."
+
+  local prompt
+  prompt="$(cat <<EOF
+You are curating the memory.md file for a single-user cross-tool AI context
+system. Your output REPLACES memory.md directly. The user will see your
+proposal in an editor and can edit before applying.
+
+Rules for the revised memory.md:
+
+1. Keep the '# Memory' header at top.
+2. Each entry is a markdown bullet: '- [YYYY-MM-DD] <text>' optionally with a
+   tag: '- [YYYY-MM-DD] [tag] <text>'.
+3. Tags — add to any untagged entry you can confidently classify:
+   - identity  : user/assistant identity (never expires)
+   - rule      : standing rules/constraints (never expires unless retracted)
+   - insight   : durable design/principle observations
+   - dead-end  : approaches tried that don't work (keep forever)
+   - state     : short-lived status (cull candidate when stale)
+   - tmp       : test fixtures, noise (cull candidate)
+4. Integrate the 'New candidates' below as NEW entries dated ${today}.
+   Assign them a plausible tag when you can.
+5. Remove entries that are clearly obsolete, duplicate, superseded, or
+   marked [smoke] / [tmp]. When in doubt, KEEP.
+6. NEVER remove entries tagged [identity] or [rule] — these are load-bearing.
+7. Preserve the EXACT wording of entries you keep. Do not paraphrase.
+8. Group by simple section headers if useful, but don't invent new taxonomy.
+
+Output ONLY the complete revised memory.md content. No preamble, no trailing
+commentary, no code fences.
+
+=== Current memory.md ===
+$(cat "$memory" 2>/dev/null)
+
+=== New candidates (drafts + activity-derived) ===
+${drafts_content:-<none>}
+
+=== Recent activity context ===
+${recent:-<none>}
+EOF
+)"
+
+  local revised
+  revised="$(printf '%s' "$prompt" | claude -p 2>/dev/null || true)"
+
+  if [ -z "$revised" ]; then
+    say "claude returned nothing — memory.md unchanged. next review: marlowe review --no-audit"
+    return 1
+  fi
+
+  local tmp
+  tmp="$(mktemp)"
+  {
+    printf '# Smart Review (audit mode) — this is the PROPOSED revised memory.md\n'
+    printf '# Save + close to apply (replaces memory.md atomically).\n'
+    printf '# Close without saving or clear the file to abort.\n'
+    printf '# Lines starting with # are stripped before applying.\n'
+    printf '#\n'
+    printf '%s\n' "$revised"
+  } > "$tmp"
+
+  local prev_size prev_count new_size new_count
+  prev_size="$(wc -c < "$memory" 2>/dev/null || echo 0)"
+  prev_count="$(grep -cE '^- ' "$memory" 2>/dev/null || echo 0)"
+  new_size="$(wc -c <<< "$revised")"
+  new_count=0
+  if grep -qE '^- ' <<< "$revised" 2>/dev/null; then
+    new_count="$(grep -cE '^- ' <<< "$revised")"
+  fi
+
+  say "proposal: ${prev_count} -> ${new_count} entries, ${prev_size}B -> ${new_size}B"
+  say "opening \${EDITOR:-vi} — prune freely, save to apply"
+
+  if [ "$yes_mode" -eq 0 ]; then
+    "${EDITOR:-vi}" "$tmp"
+  fi
+
+  # Strip comment lines
+  grep -v '^#' "$tmp" > "$tmp.clean" 2>/dev/null || true
+  mv "$tmp.clean" "$tmp"
+
+  # Abort cleanly if user cleared everything meaningful
+  if ! grep -qE '^- ' "$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    say "no entries remain after edit — aborting, memory.md unchanged"
+    return 1
+  fi
+
+  # Atomic replace
+  mv "$tmp" "$memory"
+  ok "memory.md updated by smart review (${prev_count} -> $(grep -cE '^- ' "$memory" || echo 0) entries)"
+
+  # Drafts were folded into the revised memory.md — clear them
+  printf '# Drafts — run `marlowe review` to promote to memory.md\n\n' > "$drafts"
+
+  _bump review
+  cmd_save "smart review: ${prev_count} -> $(grep -cE '^- ' "$memory" || echo 0) entries" --quiet
+}
+
 cmd_draft() {
   # Fast, lockless append to drafts.md. Called proactively by the AI (via
   # capture protocol) or by the user. Drafts are gitignored — they don't
@@ -688,13 +804,18 @@ cmd_draft() {
 }
 
 cmd_review() {
-  # Interactive-but-robust review flow. Builds a temp file of (existing
-  # drafts + AI-proposed bullets from recent activity), opens $EDITOR.
-  # Whatever survives the edit gets promoted to memory.md.
-  local yes_mode=0
+  # Two-mode review:
+  #   light — gather drafts + AI activity bullets, editor-prune, append to memory
+  #   smart — LLM proposes a REVISED memory.md (retag + cull + integrate drafts);
+  #           editor opens with the proposal; save replaces memory.md
+  # Smart mode auto-triggers when memory.md > 4 KiB or when --audit is passed.
+  # --no-audit forces light mode.
+  local yes_mode=0 force_audit=0
   while [ $# -gt 0 ]; do
     case "$1" in
-      --yes) yes_mode=1; shift ;;
+      --yes)      yes_mode=1; shift ;;
+      --audit)    force_audit=1; shift ;;
+      --no-audit) force_audit=-1; shift ;;
       *) shift ;;
     esac
   done
@@ -702,6 +823,25 @@ cmd_review() {
   local drafts="$MARLOWE_HOME/drafts.md"
   local activities="$MARLOWE_HOME/activities.md"
   local memory="$MARLOWE_HOME/memory.md"
+
+  # Mode selection: smart iff memory > 4 KiB or --audit, AND claude available.
+  local audit_mode=0
+  if [ "$force_audit" -eq 1 ]; then
+    audit_mode=1
+  elif [ "$force_audit" -ne -1 ] && [ -f "$memory" ]; then
+    local _mem_size
+    _mem_size="$(wc -c < "$memory" 2>/dev/null || echo 0)"
+    [ "$_mem_size" -gt 4096 ] && audit_mode=1
+  fi
+  if [ $audit_mode -eq 1 ] && ! command -v claude >/dev/null 2>&1; then
+    say "audit wanted but claude CLI not on PATH — falling back to light review"
+    audit_mode=0
+  fi
+
+  if [ $audit_mode -eq 1 ]; then
+    _smart_review "$drafts" "$activities" "$memory" "$yes_mode"
+    return $?
+  fi
 
   local tmp
   tmp="$(mktemp)"
@@ -1077,7 +1217,8 @@ marlowe — portable AI context
   project activate --clear    drop the override; resume \$PWD matching
   activity <msg>              fast, lockless append to activities.md (local-only log)
   draft <text>                queue a candidate for next `marlowe review`
-  review [--yes]              promote drafts (+ AI-proposed bullets) to memory
+  review [--yes] [--audit]    promote drafts; auto-audits (LLM retag+cull) if
+                              memory > 4K. --audit forces it, --no-audit skips.
   wire [shell-rc]             install shell + git hooks for auto-capture
   distill [--if-over N]       LLM-compress activities.md into memory.md bullets
 EOF
