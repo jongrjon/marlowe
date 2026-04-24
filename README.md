@@ -57,9 +57,10 @@ marlowe save [-m <msg>]       commit + push + re-apply (no-op if clean)
 marlowe lint                  validate preferences.md
 marlowe sync                  pull from origin, re-apply adapters
 marlowe apply <tool>          re-run one adapter (claude | codex | cursor)
+marlowe doctor                environment / install diagnostic
 marlowe wire [shell-rc]       install shell + git post-commit hooks (idempotent)
 marlowe activity <msg>        fast, lockless append to local activities.md
-marlowe distill               LLM-compress activities.md -> memory.md bullets
+marlowe distill [--if-over N] LLM-compress activities.md -> memory.md bullets
 ```
 
 ## Push policy — when does Marlowe commit / push?

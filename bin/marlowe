@@ -33,6 +33,22 @@ confirm() {
   case "${reply:-Y}" in Y|y|yes|YES) return 0 ;; *) return 1 ;; esac
 }
 
+_bump() {
+  # _bump <counter-key> — best-effort atomic-ish increment in a flat file.
+  # Runs on the fast path (cmd_activity); keep it fast and silent-on-failure.
+  local key="$1"
+  [ -n "$key" ] || return 0
+  [ -d "$MARLOWE_HOME" ] || return 0
+  local f="$MARLOWE_HOME/.counters"
+  touch "$f" 2>/dev/null || return 0
+  awk -v k="$key" '
+    BEGIN { found = 0 }
+    $1 == k { print $1, $2 + 1; found = 1; next }
+    { print }
+    END { if (!found) print k, 1 }
+  ' "$f" > "$f.tmp" 2>/dev/null && mv "$f.tmp" "$f" 2>/dev/null || true
+}
+
 _with_lock() {
   # _with_lock <fn> [args…]  — serialize write-side commands per host.
   # Lock lives inside $MARLOWE_HOME/.git/ so git ignores it automatically;
@@ -302,6 +318,7 @@ cmd_add() {
   ' "$f" > "$f.tmp" && mv "$f.tmp" "$f"
 
   ok "added to $type: $content"
+  _bump "add.$type"
   cmd_save "add $type: $content" --quiet
 }
 
@@ -313,6 +330,7 @@ cmd_activity() {
   [ -d "$MARLOWE_HOME" ] || return 0
   local f="$MARLOWE_HOME/activities.md"
   printf '[%s] [%s] %s\n' "$(date -Iseconds)" "$(hostname -s)" "$msg" >> "$f" 2>/dev/null || true
+  _bump activity
 }
 
 cmd_wire() {
@@ -347,24 +365,42 @@ cmd_wire() {
     say "    (b) git config --global core.hooksPath $target  (replaces current)"
   fi
 
-  # 3. Gitignore activities log + archive (local-only, never tracked)
+  # 3. Gitignore activities log + archive + counters (all local-only)
   local gi="$MARLOWE_HOME/.gitignore"
-  if [ -f "$gi" ] && ! grep -qE '^activities\.md\*$' "$gi"; then
-    # Remove any earlier `activities.md` entry and replace with the glob form
-    sed -i '/^activities\.md$/d' "$gi" 2>/dev/null || true
-    echo "activities.md*" >> "$gi"
-    ok "ignored activities.md* in $gi"
+  if [ -f "$gi" ]; then
+    if ! grep -qE '^activities\.md\*$' "$gi"; then
+      sed -i '/^activities\.md$/d' "$gi" 2>/dev/null || true
+      echo "activities.md*" >> "$gi"
+      ok "ignored activities.md* in $gi"
+    fi
+    if ! grep -qE '^\.counters$' "$gi"; then
+      echo ".counters" >> "$gi"
+      ok "ignored .counters in $gi"
+    fi
   fi
 }
 
 cmd_distill() {
   # B3: LLM pass that promotes raw activities -> durable memory bullets.
+  # Flags:
+  #   --if-over N   — skip if raw line count < N (cron-friendly: cheap no-op on quiet weeks)
+  local min_lines=1
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --if-over) min_lines="${2:?--if-over needs a number}"; shift 2 ;;
+      *)         shift ;;
+    esac
+  done
   local activities="$MARLOWE_HOME/activities.md"
   local memory="$MARLOWE_HOME/memory.md"
   [ -f "$activities" ] || { say "no activities.md — nothing to distill"; return 0; }
   local lines
   lines="$(grep -c '^\[' "$activities" 2>/dev/null || echo 0)"
   [ "$lines" -gt 0 ] || { say "activities.md is empty — nothing to distill"; return 0; }
+  if [ "$lines" -lt "$min_lines" ]; then
+    say "activities.md has $lines lines (threshold $min_lines) — skipping"
+    return 0
+  fi
   command -v claude >/dev/null || die "'claude' CLI not on PATH — install Claude Code to use distill"
 
   say "distilling $lines activity lines..."
@@ -409,6 +445,7 @@ EOF
   : > "$activities"
 
   ok "distilled $lines activities -> memory.md (raw kept at $activities.last)"
+  _bump distill
   cmd_save "distill: $lines activities -> memory" --quiet
 }
 
@@ -423,6 +460,7 @@ cmd_remember() {
   date_str="$(date +%Y-%m-%d)"
   printf -- '- [%s] %s\n' "$date_str" "$fact" >> "$f"
   ok "remembered: $fact"
+  _bump remember
   cmd_save "remember: $fact" --quiet
 }
 
@@ -561,6 +599,14 @@ cmd_status() {
     printf '%s·%s none\n' "$DIM" "$RESET"
   fi
 
+  # Telemetry: top counters (if any)
+  if [ -f "$MARLOWE_HOME/.counters" ]; then
+    local top
+    top="$(sort -k2 -nr "$MARLOWE_HOME/.counters" 2>/dev/null | head -3 \
+             | awk '{printf "%s=%s ", $1, $2}')"
+    [ -n "$top" ] && printf '%scounters%s   %s\n' "$DIM" "$RESET" "$top"
+  fi
+
   # Activities (raw, gitignored log — drains into memory via `marlowe distill`)
   printf '%sactivity%s   ' "$DIM" "$RESET"
   if [ -f "$MARLOWE_HOME/activities.md" ]; then
@@ -586,6 +632,103 @@ cmd_status() {
   fi
 }
 
+cmd_doctor() {
+  # One-shot diagnostic — answers "why isn't it working?" with a concrete list.
+  # Exit non-zero if any critical check fails so CI / cron can trust it.
+  printf '%s⟡ marlowe doctor%s\n\n' "$PINK" "$RESET"
+  local fails=0
+
+  _check_ok()   { printf '  %s✓%s %s\n' "$PINK" "$RESET" "$1"; }
+  _check_warn() { printf '  %s·%s %s  %s— %s%s\n' "$DIM" "$RESET" "$1" "$DIM" "$2" "$RESET"; }
+  _check_fail() { printf '  %s!%s %s  %s— %s%s\n' "$PINK" "$RESET" "$1" "$DIM" "$2" "$RESET"; fails=$((fails+1)); }
+
+  # PATH: marlowe itself (hooks depend on this)
+  if command -v marlowe >/dev/null 2>&1; then
+    _check_ok "marlowe on PATH — hooks can fire"
+  else
+    _check_fail "marlowe NOT on PATH" "symlink bin/marlowe into ~/.local/bin (see install.sh) — B1/B2 no-op until fixed"
+  fi
+
+  # PATH: claude (for distill)
+  if command -v claude >/dev/null 2>&1; then
+    _check_ok "claude on PATH — distill available"
+  else
+    _check_warn "claude not on PATH" "marlowe distill will error; rest of marlowe unaffected"
+  fi
+
+  # MARLOWE_HOME initialized
+  if [ -d "$MARLOWE_HOME/.git" ]; then
+    _check_ok "data repo initialized at $MARLOWE_HOME"
+  else
+    _check_fail "data repo not initialized" "run: marlowe init"
+  fi
+
+  # MARLOWE_FRAMEWORK present
+  if [ -d "$MARLOWE_FRAMEWORK" ]; then
+    _check_ok "framework at $MARLOWE_FRAMEWORK"
+  else
+    _check_fail "framework dir missing" "expected $MARLOWE_FRAMEWORK — re-run install.sh"
+  fi
+
+  # preferences.md present and non-placeholder
+  local prefs="$MARLOWE_HOME/preferences.md"
+  if [ -f "$prefs" ]; then
+    if grep -q '__[A-Z_]*__' "$prefs" 2>/dev/null; then
+      _check_fail "preferences.md has unresolved placeholders" "run: marlowe init --force"
+    else
+      _check_ok "preferences.md resolved"
+    fi
+  else
+    _check_fail "preferences.md missing" "run: marlowe init"
+  fi
+
+  # B2: core.hooksPath -> framework/hooks
+  local want="$MARLOWE_FRAMEWORK/hooks"
+  local got
+  got="$(git config --global --get core.hooksPath 2>/dev/null || true)"
+  if [ "$got" = "$want" ]; then
+    _check_ok "git core.hooksPath -> $want (B2 wired)"
+  elif [ -z "$got" ]; then
+    _check_warn "git core.hooksPath unset (B2 off)" "run: marlowe wire"
+  else
+    _check_warn "git core.hooksPath -> $got (B2 off: not our hooks)" "manually merge or re-run marlowe wire"
+  fi
+
+  # B1: shell rc sources shell/marlowe.sh
+  local rc
+  for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
+    [ -f "$rc" ] || continue
+    if grep -qF "$MARLOWE_FRAMEWORK/shell/marlowe.sh" "$rc" 2>/dev/null; then
+      _check_ok "shell hook in $rc (B1 wired)"
+      break
+    fi
+  done
+  if ! grep -qlF "$MARLOWE_FRAMEWORK/shell/marlowe.sh" "$HOME/.bashrc" "$HOME/.zshrc" 2>/dev/null; then
+    _check_warn "shell hook not sourced (B1 off)" "run: marlowe wire"
+  fi
+
+  # Adapters applied to at least one tool
+  local adapted=0
+  for p in "$HOME/.claude/CLAUDE.md" "$HOME/.codex/AGENTS.md"; do
+    if [ -f "$p" ] && grep -q '<!-- marlowe:begin -->' "$p" 2>/dev/null; then
+      adapted=$((adapted + 1))
+    fi
+  done
+  if [ "$adapted" -gt 0 ]; then
+    _check_ok "$adapted tool(s) have marlowe block injected"
+  else
+    _check_warn "no adapters applied" "run: marlowe sync (or: marlowe apply <tool>)"
+  fi
+
+  printf '\n'
+  if [ $fails -eq 0 ]; then
+    printf '  %s✓%s all critical checks passed\n' "$PINK" "$RESET"
+    return 0
+  fi
+  printf '  %s!%s %d critical failure(s) — address items above\n' "$PINK" "$RESET" "$fails"
+  return 1
+}
+
 cmd_help() {
   cat <<EOF
 marlowe — portable AI context
@@ -601,9 +744,10 @@ marlowe — portable AI context
   lint [--warn-only]          validate preferences.md
   sync                        pull private repo, re-apply all adapters
   apply <tool>                re-run one adapter (claude | codex | cursor)
+  doctor                      environment / install diagnostic
   activity <msg>              fast, lockless append to activities.md (local-only log)
   wire [shell-rc]             install shell + git hooks for auto-capture
-  distill                     LLM-compress activities.md into memory.md bullets
+  distill [--if-over N]       LLM-compress activities.md into memory.md bullets
 EOF
 }
 
@@ -614,6 +758,7 @@ case "$cmd" in
   init)     cmd_init     "$@" ;;
   status)   cmd_status   "$@" ;;
   lint)     cmd_lint     "$@" ;;
+  doctor)   cmd_doctor   "$@" ;;
   activity) cmd_activity "$@" ;;
   wire)     cmd_wire     "$@" ;;
   # Write-side: serialize per-host via flock.
