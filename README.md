@@ -139,6 +139,17 @@ source ~/.bashrc          # or open a new shell
 marlowe distill           # when the log builds up
 ```
 
+## Tests
+
+Bats test suite under `tests/`. Install bats-core, then:
+
+```sh
+bats tests/
+```
+
+Each test is isolated — runs against a throwaway `HOME` / `MARLOWE_HOME` / git
+global config, so it never touches your real dotfiles or config.
+
 ## Status
 
 v0.6 — inject working on Claude + Codex, capture protocol shipped across both.

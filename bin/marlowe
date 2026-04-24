@@ -184,7 +184,7 @@ cmd_sync() {
   fi
   for a in "$MARLOWE_FRAMEWORK"/adapters/*/apply.sh; do
     tool="$(basename "$(dirname "$a")")"
-    [ -d "$HOME/.$tool" ] && "$a"
+    [ -d "$HOME/.$tool" ] && "$a" || true
   done
 }
 
@@ -278,7 +278,7 @@ cmd_save() {
   for a in "$MARLOWE_FRAMEWORK"/adapters/*/apply.sh; do
     local tool
     tool="$(basename "$(dirname "$a")")"
-    [ -d "$HOME/.$tool" ] && "$a" >/dev/null
+    [ -d "$HOME/.$tool" ] && "$a" >/dev/null || true
   done
 }
 
