@@ -2,7 +2,18 @@
 set -euo pipefail
 
 MARLOWE_HOME="${MARLOWE_HOME:-$HOME/.marlowe}"
-MARLOWE_FRAMEWORK="${MARLOWE_FRAMEWORK:-$HOME/.marlowe-framework}"
+
+# Self-locate the framework from this script's resolved path. Works whether
+# marlowe is invoked directly from a checkout, via an install.sh symlink, or
+# via a custom symlink pointing anywhere. Falls back to $HOME/.marlowe-framework
+# if readlink -f is unavailable (e.g. stock macOS without coreutils).
+if [ -z "${MARLOWE_FRAMEWORK:-}" ]; then
+  _marlowe_bin="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null || printf '%s' "${BASH_SOURCE[0]}")"
+  if [ -n "$_marlowe_bin" ] && [ -f "$_marlowe_bin" ]; then
+    MARLOWE_FRAMEWORK="$(cd "$(dirname "$_marlowe_bin")/.." 2>/dev/null && pwd)"
+  fi
+  : "${MARLOWE_FRAMEWORK:=$HOME/.marlowe-framework}"
+fi
 
 PINK=$'\033[38;2;254;1;154m'
 DIM=$'\033[2m'
@@ -942,7 +953,7 @@ cmd_doctor() {
   if command -v marlowe >/dev/null 2>&1; then
     _check_ok "marlowe on PATH — hooks can fire"
   else
-    _check_fail "marlowe NOT on PATH" "symlink bin/marlowe into ~/.local/bin (see install.sh) — B1/B2 no-op until fixed"
+    _check_fail "marlowe NOT on PATH" "run: mkdir -p ~/.local/bin && ln -sf '$MARLOWE_FRAMEWORK/bin/marlowe' ~/.local/bin/marlowe  (B1/B2 no-op until fixed)"
   fi
 
   # PATH: claude (for distill)
