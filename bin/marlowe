@@ -677,7 +677,10 @@ _smart_review() {
   # untagged entries, (c) culls obsolete/duplicate/test-fixture entries.
   # The user reviews the complete proposal in $EDITOR before it replaces
   # memory.md atomically. AI does the hard work; user has easy veto.
-  local drafts="$1" activities="$2" memory="$3" yes_mode="$4"
+  # NOTE: --yes is not accepted here — editor veto is non-negotiable because
+  # LLM proposals can hallucinate (real v0.11 dogfood finding, see memory.md
+  # dead-end entry).
+  local drafts="$1" activities="$2" memory="$3"
 
   local drafts_content=""
   [ -f "$drafts" ] && drafts_content="$(grep -E '^- ' "$drafts" 2>/dev/null || true)"
@@ -759,11 +762,10 @@ EOF
   fi
 
   say "proposal: ${prev_count} -> ${new_count} entries, ${prev_size}B -> ${new_size}B"
-  say "opening \${EDITOR:-vi} — prune freely, save to apply"
+  say "opening \${EDITOR:-vi} — prune hallucinated or low-signal lines, save to apply"
 
-  if [ "$yes_mode" -eq 0 ]; then
-    "${EDITOR:-vi}" "$tmp"
-  fi
+  # Always open editor in smart mode — LLM output requires human veto.
+  "${EDITOR:-vi}" "$tmp"
 
   # Strip comment lines
   grep -v '^#' "$tmp" > "$tmp.clean" 2>/dev/null || true
@@ -839,7 +841,13 @@ cmd_review() {
   fi
 
   if [ $audit_mode -eq 1 ]; then
-    _smart_review "$drafts" "$activities" "$memory" "$yes_mode"
+    # --yes is intentionally NOT honored in smart mode: LLM proposals can
+    # include hallucinations (fake entries, wrong tags) and the editor veto
+    # is the last line of defense. Warn and force editor.
+    if [ "$yes_mode" -eq 1 ]; then
+      say "NOTE: --yes ignored in smart mode (LLM output needs human review — editor will open)"
+    fi
+    _smart_review "$drafts" "$activities" "$memory"
     return $?
   fi
 
