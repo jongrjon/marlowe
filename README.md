@@ -132,6 +132,29 @@ explicitly run `marlowe distill`.
 **Why gitignored?** Raw activities are noisy and per-machine. Only distilled
 facts are worth the perpetual per-session token cost in every adapted tool.
 
+## Rear-view capture (drafts + review)
+
+Explicit cues only catch what you *know* matters. Often you don't realize
+until after the fact what was important — the turn that was a dead end,
+the implicit preference revealed by frustration, the surprising finding.
+
+Marlowe handles this with a **draft queue**:
+
+- **AI proactively calls `marlowe draft "<fact>"`** (max 3/session) when it
+  notices these patterns — via an extension to the capture protocol.
+- **Drafts are gitignored** — they live in `~/.marlowe/drafts.md`, local-only.
+- **`marlowe review`** opens a temp file in `$EDITOR` with existing drafts
+  plus fresh AI-proposed bullets from recent activity. Delete lines you
+  don't want; save to promote the rest to `memory.md`.
+
+This creates three capture modes that compose:
+
+| You... | → runs | lives in |
+|--------|--------|----------|
+| explicitly flag (`"remember X"`)      | `marlowe remember` | memory.md (direct) |
+| pass through AI's observation          | `marlowe draft`    | drafts.md → review → memory.md |
+| realize in retrospect (`marlowe review`) | review proposes from activity log | memory.md (after approval) |
+
 Setup:
 ```sh
 marlowe wire              # one-time; idempotent

@@ -565,6 +565,10 @@ cmd_wire() {
       echo ".active-project" >> "$gi"
       ok "ignored .active-project in $gi"
     fi
+    if ! grep -qE '^drafts\.md$' "$gi"; then
+      echo "drafts.md" >> "$gi"
+      ok "ignored drafts.md in $gi"
+    fi
   fi
 }
 
@@ -650,6 +654,110 @@ cmd_remember() {
   ok "remembered: $fact"
   _bump remember
   cmd_save "remember: $fact" --quiet
+}
+
+cmd_draft() {
+  # Fast, lockless append to drafts.md. Called proactively by the AI (via
+  # capture protocol) or by the user. Drafts are gitignored — they don't
+  # cross into memory until the user runs `marlowe review`.
+  local text="$*"
+  [ -n "$text" ] || die "usage: marlowe draft <text>"
+  [ -d "$MARLOWE_HOME" ] || return 0
+  local f="$MARLOWE_HOME/drafts.md"
+  if [ ! -f "$f" ]; then
+    printf '# Drafts — run `marlowe review` to promote to memory.md\n\n' > "$f"
+  fi
+  printf -- '- [%s] %s\n' "$(date +%Y-%m-%d)" "$text" >> "$f"
+  _bump draft
+  ok "drafted: $text"
+}
+
+cmd_review() {
+  # Interactive-but-robust review flow. Builds a temp file of (existing
+  # drafts + AI-proposed bullets from recent activity), opens $EDITOR.
+  # Whatever survives the edit gets promoted to memory.md.
+  local yes_mode=0
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --yes) yes_mode=1; shift ;;
+      *) shift ;;
+    esac
+  done
+
+  local drafts="$MARLOWE_HOME/drafts.md"
+  local activities="$MARLOWE_HOME/activities.md"
+  local memory="$MARLOWE_HOME/memory.md"
+
+  local tmp
+  tmp="$(mktemp)"
+  {
+    echo "# Review — delete lines you DON'T want. Save + close to promote the rest."
+    echo "# Lines not starting with '- ' are ignored."
+    echo
+    if [ -f "$drafts" ]; then
+      grep -E '^- ' "$drafts" 2>/dev/null || true
+    fi
+    # Ask claude for additional candidates from recent activities
+    if command -v claude >/dev/null 2>&1 && [ -f "$activities" ] && [ -s "$activities" ]; then
+      local recent
+      recent="$(tail -50 "$activities" 2>/dev/null || true)"
+      if [ -n "$recent" ]; then
+        local prompt
+        prompt="You are helping with end-of-session review.
+Below are activity log entries (cd into repos, git commits). Propose 1-5
+candidate facts the user MAY want remembered but has not explicitly flagged.
+Focus on dead ends (tried then reverted), implicit patterns, surprising
+findings. Each candidate ≤120 chars. Format: - <bullet>.
+If nothing is worth keeping, output exactly: NONE
+
+Activity log:
+$recent"
+        local ai
+        ai="$(printf '%s' "$prompt" | claude -p 2>/dev/null || true)"
+        if [ -n "$ai" ] && [ "$ai" != "NONE" ]; then
+          grep -E '^- ' <<< "$ai" 2>/dev/null || true
+        fi
+      fi
+    fi
+  } > "$tmp"
+
+  local n=0
+  if grep -qE '^- ' "$tmp" 2>/dev/null; then
+    n="$(grep -cE '^- ' "$tmp")"
+  fi
+  if [ "$n" -eq 0 ]; then
+    rm -f "$tmp"
+    say "nothing to review (no drafts, no AI proposals)"
+    return 0
+  fi
+
+  say "$n candidate(s) queued — opening \${EDITOR:-vi} (delete unwanted lines, save to promote)"
+  if [ $yes_mode -eq 0 ]; then
+    "${EDITOR:-vi}" "$tmp"
+  fi
+
+  local kept
+  kept="$(grep -E '^- ' "$tmp" 2>/dev/null || true)"
+  rm -f "$tmp"
+
+  local count=0
+  if [ -n "$kept" ]; then
+    count="$(printf '%s\n' "$kept" | grep -cE '^- ' || echo 0)"
+    {
+      printf '\n## Reviewed %s\n' "$(date +%Y-%m-%d)"
+      printf '%s\n' "$kept"
+    } >> "$memory"
+    ok "promoted $count candidate(s) to memory.md"
+  else
+    say "nothing promoted"
+  fi
+
+  # Clear drafts whether or not anything was promoted — the review decision
+  # is complete either way.
+  printf '# Drafts — run `marlowe review` to promote to memory.md\n\n' > "$drafts"
+
+  _bump review
+  cmd_save "review: $count -> memory" --quiet
 }
 
 cmd_edit() {
@@ -953,6 +1061,8 @@ marlowe — portable AI context
   project activate <name>     force active (overrides \$PWD match)
   project activate --clear    drop the override; resume \$PWD matching
   activity <msg>              fast, lockless append to activities.md (local-only log)
+  draft <text>                queue a candidate for next `marlowe review`
+  review [--yes]              promote drafts (+ AI-proposed bullets) to memory
   wire [shell-rc]             install shell + git hooks for auto-capture
   distill [--if-over N]       LLM-compress activities.md into memory.md bullets
 EOF
@@ -967,6 +1077,7 @@ case "$cmd" in
   lint)     cmd_lint     "$@" ;;
   doctor)   cmd_doctor   "$@" ;;
   activity) cmd_activity "$@" ;;
+  draft)    cmd_draft    "$@" ;;
   wire)     cmd_wire     "$@" ;;
   # Write-side: serialize per-host via flock.
   add)      _with_lock cmd_add      "$@" ;;
@@ -977,5 +1088,6 @@ case "$cmd" in
   sync)     _with_lock cmd_sync     "$@" ;;
   apply)    _with_lock cmd_apply    "$@" ;;
   distill)  _with_lock cmd_distill  "$@" ;;
+  review)   _with_lock cmd_review   "$@" ;;
   help|*) cmd_help ;;
 esac

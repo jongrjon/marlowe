@@ -65,4 +65,13 @@ On explicit cues, run the command yourself (one-line confirm, no ask):
 - "working on X"                → `marlowe add project "X"`
 
 Explicit cue only. `marlowe` is on PATH; auto-commits.
+
+## Draft (rear-view, max 3 / session)
+
+You may call `marlowe draft "<fact>"` without a cue when you notice:
+- dead end (tried X, backed out, went with Y)
+- implicit preference (shown by frustration or correction)
+- surprising finding the user reacted to
+
+Drafts queue for `marlowe review` — they don't touch memory directly.
 EOF
