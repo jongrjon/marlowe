@@ -57,6 +57,9 @@ marlowe save [-m <msg>]       commit + push + re-apply (no-op if clean)
 marlowe lint                  validate preferences.md
 marlowe sync                  pull from origin, re-apply adapters
 marlowe apply <tool>          re-run one adapter (claude | codex | cursor)
+marlowe wire [shell-rc]       install shell + git post-commit hooks (idempotent)
+marlowe activity <msg>        fast, lockless append to local activities.md
+marlowe distill               LLM-compress activities.md -> memory.md bullets
 ```
 
 ## Push policy — when does Marlowe commit / push?
@@ -106,6 +109,34 @@ itself. No per-tool hooks, no daemons.
 - "working on X"                → `marlowe add project "X"`
 
 Explicit cue only. Auto-commits + pushes. Works on any tool that can shell out.
+
+## Automated capture (B1 + B2 + B3)
+
+Explicit capture requires you to be alive and in-session. For crash-readiness,
+Marlowe runs three always-on, zero-token taps that feed a raw, **gitignored**
+`~/.marlowe/activities.md` log. Nothing crosses the git boundary until you
+explicitly run `marlowe distill`.
+
+- **B1 — shell entry hook.** Logs the first time you `cd` into any git repo
+  in a shell session. Installed via `marlowe wire`, appended to `~/.bashrc`
+  (or `~/.zshrc`). Runs async so the prompt never waits.
+- **B2 — git post-commit hook.** Every commit on any repo becomes one activity
+  line: `commit <repo>@<sha>: <subject>`. Installed globally via
+  `core.hooksPath`. Silent on failure; never blocks a commit.
+- **B3 — `marlowe distill`.** Opt-in LLM pass (uses local `claude` CLI) that
+  compresses N raw activity lines into 1-3 durable bullets, promotes them to
+  `memory.md`, and archives the raw log to `activities.md.last` (also
+  gitignored). Run it weekly, or when `marlowe status` flags >50 lines.
+
+**Why gitignored?** Raw activities are noisy and per-machine. Only distilled
+facts are worth the perpetual per-session token cost in every adapted tool.
+
+Setup:
+```sh
+marlowe wire              # one-time; idempotent
+source ~/.bashrc          # or open a new shell
+marlowe distill           # when the log builds up
+```
 
 ## Status
 

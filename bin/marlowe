@@ -305,6 +305,113 @@ cmd_add() {
   cmd_save "add $type: $content" --quiet
 }
 
+cmd_activity() {
+  # Fast, lockless append. Single-line appends are atomic on POSIX.
+  # Runs zero-cost on the common path — called from shell hook / git hook.
+  local msg="$*"
+  [ -n "$msg" ] || return 0
+  [ -d "$MARLOWE_HOME" ] || return 0
+  local f="$MARLOWE_HOME/activities.md"
+  printf '[%s] [%s] %s\n' "$(date -Iseconds)" "$(hostname -s)" "$msg" >> "$f" 2>/dev/null || true
+}
+
+cmd_wire() {
+  # Idempotent installer for automation hooks: shell (B1) + git post-commit (B2).
+  local shellrc="${1:-$HOME/.bashrc}"
+  local source_line="[ -f \"$MARLOWE_FRAMEWORK/shell/marlowe.sh\" ] && . \"$MARLOWE_FRAMEWORK/shell/marlowe.sh\""
+
+  # 1. Shell hook
+  if [ ! -f "$shellrc" ]; then
+    die "no shell rc at $shellrc — pass path as arg or create it"
+  fi
+  if grep -qF "$MARLOWE_FRAMEWORK/shell/marlowe.sh" "$shellrc" 2>/dev/null; then
+    ok "shell hook already present in $shellrc"
+  else
+    printf '\n# marlowe: log repo entries as activities\n%s\n' "$source_line" >> "$shellrc"
+    ok "added shell hook -> $shellrc (reload with: source $shellrc)"
+  fi
+
+  # 2. Git hook (via core.hooksPath)
+  local target="$MARLOWE_FRAMEWORK/hooks"
+  local current
+  current="$(git config --global --get core.hooksPath 2>/dev/null || true)"
+  if [ -z "$current" ]; then
+    git config --global core.hooksPath "$target"
+    ok "set global core.hooksPath -> $target"
+  elif [ "$current" = "$target" ]; then
+    ok "global core.hooksPath already -> $target"
+  else
+    say "core.hooksPath is set to: $current"
+    say "  not overriding. to enable marlowe git hooks, either:"
+    say "    (a) copy $target/post-commit into $current/"
+    say "    (b) git config --global core.hooksPath $target  (replaces current)"
+  fi
+
+  # 3. Gitignore activities log + archive (local-only, never tracked)
+  local gi="$MARLOWE_HOME/.gitignore"
+  if [ -f "$gi" ] && ! grep -qE '^activities\.md\*$' "$gi"; then
+    # Remove any earlier `activities.md` entry and replace with the glob form
+    sed -i '/^activities\.md$/d' "$gi" 2>/dev/null || true
+    echo "activities.md*" >> "$gi"
+    ok "ignored activities.md* in $gi"
+  fi
+}
+
+cmd_distill() {
+  # B3: LLM pass that promotes raw activities -> durable memory bullets.
+  local activities="$MARLOWE_HOME/activities.md"
+  local memory="$MARLOWE_HOME/memory.md"
+  [ -f "$activities" ] || { say "no activities.md — nothing to distill"; return 0; }
+  local lines
+  lines="$(grep -c '^\[' "$activities" 2>/dev/null || echo 0)"
+  [ "$lines" -gt 0 ] || { say "activities.md is empty — nothing to distill"; return 0; }
+  command -v claude >/dev/null || die "'claude' CLI not on PATH — install Claude Code to use distill"
+
+  say "distilling $lines activity lines..."
+
+  local prompt
+  prompt="$(cat <<EOF
+You are compressing a raw activity log into durable memory.
+
+Input: timestamped entries of the form \`[ts] [host] msg\` — shell repo entries
+and git commits logged automatically.
+
+Task: output 1-3 bullets (each <120 chars) capturing durable, cross-session-useful
+narrative. Prefer project-level framing ("iterated on marlowe adapter layer",
+"shipped v0.7 automation") over granular events. Drop SHAs, timestamps, host names.
+
+If nothing is durable, output exactly: NONE
+
+Output plain "- " bullets, no preamble, no trailing text.
+
+Activity log:
+$(cat "$activities")
+EOF
+)"
+
+  local summary
+  summary="$(printf '%s' "$prompt" | claude -p 2>/dev/null | sed '/^$/d')"
+
+  if [ -z "$summary" ] || [ "$summary" = "NONE" ]; then
+    say "no durable facts extracted — activities.md left intact"
+    return 0
+  fi
+
+  local date_str
+  date_str="$(date +%Y-%m-%d)"
+  {
+    printf '\n## Distilled %s\n' "$date_str"
+    printf '%s\n' "$summary"
+  } >> "$memory"
+
+  # Archive raw log before reset (local-only; never committed)
+  mv "$activities" "$activities.last"
+  : > "$activities"
+
+  ok "distilled $lines activities -> memory.md (raw kept at $activities.last)"
+  cmd_save "distill: $lines activities -> memory" --quiet
+}
+
 cmd_remember() {
   local fact="$*"
   [ -n "$fact" ] || die "usage: marlowe remember \"<fact>\""
@@ -454,6 +561,22 @@ cmd_status() {
     printf '%s·%s none\n' "$DIM" "$RESET"
   fi
 
+  # Activities (raw, gitignored log — drains into memory via `marlowe distill`)
+  printf '%sactivity%s   ' "$DIM" "$RESET"
+  if [ -f "$MARLOWE_HOME/activities.md" ]; then
+    local act_count act_ago
+    act_count="$(grep -cE '^\[' "$MARLOWE_HOME/activities.md" 2>/dev/null || echo 0)"
+    act_ago="$(_mtime_ago "$MARLOWE_HOME/activities.md")"
+    if [ "$act_count" -gt 50 ]; then
+      printf '%s lines (last %s) %s·%s consider: marlowe distill\n' \
+        "$act_count" "$act_ago" "$PINK" "$RESET"
+    else
+      printf '%s lines (last %s)\n' "$act_count" "$act_ago"
+    fi
+  else
+    printf '%s·%s no log yet — run: marlowe wire\n' "$DIM" "$RESET"
+  fi
+
   # Claude statusLine wiring
   printf '\n%sstatusline%s '"$DIM"'(Claude Code)'"$RESET"'  ' "$DIM" "$RESET"
   if grep -Eq 'marlowe.*statusline|statusline[-.]' "$HOME/.claude/settings.json" 2>/dev/null; then
@@ -478,15 +601,21 @@ marlowe — portable AI context
   lint [--warn-only]          validate preferences.md
   sync                        pull private repo, re-apply all adapters
   apply <tool>                re-run one adapter (claude | codex | cursor)
+  activity <msg>              fast, lockless append to activities.md (local-only log)
+  wire [shell-rc]             install shell + git hooks for auto-capture
+  distill                     LLM-compress activities.md into memory.md bullets
 EOF
 }
 
 cmd="${1:-help}"; shift || true
 case "$cmd" in
-  # Read-side: no lock.
-  init)   cmd_init   "$@" ;;
-  status) cmd_status "$@" ;;
-  lint)   cmd_lint   "$@" ;;
+  # Read-side + fast-path (no lock): activity is an atomic single-line append,
+  # called from shell hooks many times per session; must not block.
+  init)     cmd_init     "$@" ;;
+  status)   cmd_status   "$@" ;;
+  lint)     cmd_lint     "$@" ;;
+  activity) cmd_activity "$@" ;;
+  wire)     cmd_wire     "$@" ;;
   # Write-side: serialize per-host via flock.
   add)      _with_lock cmd_add      "$@" ;;
   edit)     _with_lock cmd_edit     "$@" ;;
@@ -494,5 +623,6 @@ case "$cmd" in
   save)     _with_lock cmd_save     "$@" ;;
   sync)     _with_lock cmd_sync     "$@" ;;
   apply)    _with_lock cmd_apply    "$@" ;;
+  distill)  _with_lock cmd_distill  "$@" ;;
   help|*) cmd_help ;;
 esac

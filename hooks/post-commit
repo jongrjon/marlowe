@@ -1,0 +1,9 @@
+#!/bin/sh
+# marlowe — log each commit as an activity. Safe to wire as a global hook via
+# `git config --global core.hooksPath`. Silent on failure so it never blocks a commit.
+command -v marlowe >/dev/null 2>&1 || exit 0
+REPO="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+SHA="$(git rev-parse --short HEAD 2>/dev/null)" || exit 0
+SUBJECT="$(git log -1 --format=%s 2>/dev/null)" || exit 0
+marlowe activity "commit ${REPO##*/}@${SHA}: ${SUBJECT}" >/dev/null 2>&1 &
+exit 0
