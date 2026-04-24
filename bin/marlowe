@@ -68,7 +68,20 @@ _with_lock() {
   # _with_lock <fn> [args…]  — serialize write-side commands per host.
   # Lock lives inside $MARLOWE_HOME/.git/ so git ignores it automatically;
   # falls back to $MARLOWE_HOME/.lock if the data repo isn't initialized yet.
+  # If flock is absent (stock macOS, Git Bash without extras), degrade
+  # gracefully: warn once and run without serialization. Single-user dev
+  # machines typically don't race concurrent marlowe invocations.
   local fn="$1"; shift
+
+  if ! command -v flock >/dev/null 2>&1; then
+    if [ -z "${_MARLOWE_FLOCK_WARNED:-}" ]; then
+      say "note: flock not available — running without intra-host lock (concurrent runs may race)"
+      _MARLOWE_FLOCK_WARNED=1
+    fi
+    "$fn" "$@"
+    return $?
+  fi
+
   local lockdir lockfile
   if [ -d "$MARLOWE_HOME/.git" ]; then
     lockdir="$MARLOWE_HOME/.git"

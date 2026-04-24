@@ -162,6 +162,27 @@ source ~/.bashrc          # or open a new shell
 marlowe distill           # when the log builds up
 ```
 
+## Platform support
+
+Marlowe is a POSIX shell project. It depends on `bash` (4+), `git`, `awk`,
+`sed`, `grep`, `wc`, `mktemp`, `readlink -f`, and (optionally) `flock`.
+
+| Platform | Status | Notes |
+|---|---|---|
+| **Linux** | ✅ Primary | Reference platform; all releases tested here |
+| **Windows + WSL2** | ✅ Recommended for Windows | Identical to Linux, zero changes |
+| **Windows + Git Bash** | ⚠️ Works with caveats | No `flock` by default → intra-host lock degrades to warn-and-proceed. Cursor clipboard uses `clip.exe`. Set `git config --global core.autocrlf input` so shell scripts stay LF. Install.sh symlink may need Windows developer mode enabled, or replace with a wrapper script. |
+| **Windows + PowerShell** | ❌ Not supported | Would require a parallel implementation. Use WSL2 or Git Bash. |
+| **macOS** | ⚠️ Needs GNU coreutils | `brew install coreutils flock` — then `greadlink -f` and `flock` are available. Without GNU coreutils, `readlink -f` fails silently in some paths and `flock` absence triggers the warn-and-proceed degradation. |
+
+### Windows setup — the 60-second path
+
+```powershell
+wsl --install -d Ubuntu   # Windows admin shell, one-time
+```
+
+Then inside the Ubuntu WSL shell, `curl … | sh` the installer exactly as on Linux. Marlowe's state lives at `\\wsl$\Ubuntu\home\<you>\.marlowe` — `marlowe apply claude` / `codex` / `cursor` writes to whichever adapter configs are visible from WSL. For Windows-native Cursor, paste the rendered rules from `\\wsl$\Ubuntu\home\<you>\.marlowe\generated\cursor-rules.md` into Cursor's User Rules panel.
+
 ## Tests
 
 Bats test suite under `tests/`. Install bats-core, then:

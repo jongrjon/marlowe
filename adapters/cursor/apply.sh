@@ -22,12 +22,13 @@ if   command -v wl-copy  >/dev/null 2>&1; then wl-copy  < "$OUT" && COPIED="wl-c
 elif command -v xclip    >/dev/null 2>&1; then xclip -selection clipboard < "$OUT" && COPIED="xclip"
 elif command -v xsel     >/dev/null 2>&1; then xsel --clipboard --input  < "$OUT" && COPIED="xsel"
 elif command -v pbcopy   >/dev/null 2>&1; then pbcopy   < "$OUT" && COPIED="pbcopy"
+elif command -v clip.exe >/dev/null 2>&1; then clip.exe < "$OUT" && COPIED="clip.exe"
 fi
 
 if [ -n "$COPIED" ]; then
   echo "[marlowe/cursor] copied to clipboard ($COPIED) — ready to paste"
 else
-  echo "[marlowe/cursor] no clipboard tool (wl-copy/xclip/xsel/pbcopy) — copy manually"
+  echo "[marlowe/cursor] no clipboard tool (wl-copy/xclip/xsel/pbcopy/clip.exe) — copy manually"
 fi
 
 cat <<EOF
