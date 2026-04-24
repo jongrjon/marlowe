@@ -15,6 +15,10 @@ if [ -z "${MARLOWE_FRAMEWORK:-}" ]; then
   : "${MARLOWE_FRAMEWORK:=$HOME/.marlowe-framework}"
 fi
 
+# Export so adapter scripts (and any other child process) inherit the right
+# values. Plain assignment above doesn't propagate beyond bin/marlowe itself.
+export MARLOWE_HOME MARLOWE_FRAMEWORK
+
 PINK=$'\033[38;2;254;1;154m'
 DIM=$'\033[2m'
 BOLD=$'\033[1m'
