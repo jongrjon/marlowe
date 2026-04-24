@@ -39,6 +39,7 @@ if [ -f "$PROJECTS" ]; then
   done < <(grep -E '^- ' "$PROJECTS" 2>/dev/null || true)
 
   printf '\n\n# Projects\n\n'
+  printf 'If I ask about a project below, read its `CLAUDE.md` / `AGENTS.md` at the pointed\npath before answering. Brief = summary, not full context. Active gets priority.\n\n'
   while IFS='|' read -r _n _p _g _b; do
     _n="$(printf '%s' "${_n#- }" | sed 's/^ *//;s/ *$//')"
     _p="$(printf '%s' "$_p" | sed 's/^ *//;s/ *$//')"

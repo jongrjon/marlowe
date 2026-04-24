@@ -323,8 +323,17 @@ cmd_add() {
 }
 
 _project_active_name() {
+  # Precedence: explicit override (.active-project) > $PWD longest-path match.
   local f="$MARLOWE_HOME/projects.md"
   [ -f "$f" ] || return 0
+  local marker="$MARLOWE_HOME/.active-project"
+  if [ -f "$marker" ]; then
+    local override
+    override="$(head -1 "$marker" 2>/dev/null | sed 's/^ *//;s/ *$//')"
+    if [ -n "$override" ] && grep -qE "^- *$override *\|" "$f" 2>/dev/null; then
+      printf '%s' "$override"; return 0
+    fi
+  fi
   local pwd_abs
   pwd_abs="$(pwd -P 2>/dev/null)" || return 0
   local best_name="" best_len=0
@@ -349,10 +358,13 @@ _project_active_name() {
 cmd_project() {
   local sub="${1:-list}"; shift || true
   case "$sub" in
-    add)    _project_add    "$@" ;;
-    list)   _project_list   "$@" ;;
-    active) _project_show_active "$@" ;;
-    *) die "usage: marlowe project <add|list|active>" ;;
+    add)      _project_add      "$@" ;;
+    list)     _project_list     "$@" ;;
+    active)   _project_show_active "$@" ;;
+    remove|rm) _project_remove  "$@" ;;
+    brief)    _project_brief    "$@" ;;
+    activate) _project_activate "$@" ;;
+    *) die "usage: marlowe project <add|list|active|remove|brief|activate>" ;;
   esac
 }
 
@@ -424,6 +436,76 @@ _project_show_active() {
   fi
 }
 
+_project_remove() {
+  local name="${1:?usage: marlowe project remove <name>}"
+  local f="$MARLOWE_HOME/projects.md"
+  [ -f "$f" ] || die "no projects.md"
+  grep -qE "^- *$name *\|" "$f" || die "project '$name' not found"
+  local tmp="$f.tmp"
+  awk -v n="$name" '
+    /^- / {
+      split($0, parts, "|"); nm = parts[1]; sub(/^- */, "", nm); sub(/ *$/, "", nm);
+      if (nm == n) next
+    }
+    { print }
+  ' "$f" > "$tmp" && mv "$tmp" "$f"
+  ok "removed project: $name"
+  _bump "project.remove"
+  cmd_save "project: remove $name" --quiet
+}
+
+_project_brief() {
+  local name="${1:?usage: marlowe project brief <name> <new-brief>}"; shift
+  local new_brief="$*"
+  [ -n "$new_brief" ] || die "missing new brief"
+  new_brief="${new_brief:0:80}"
+  local f="$MARLOWE_HOME/projects.md"
+  [ -f "$f" ] || die "no projects.md"
+  local found=0 tmp="$f.tmp"
+  : > "$tmp"
+  while IFS= read -r line; do
+    case "$line" in
+      "- "*)
+        local rest="${line#- }"
+        IFS='|' read -r _n _p _g _b <<< "$rest"
+        local tn
+        tn="$(printf '%s' "$_n" | sed 's/^ *//;s/ *$//')"
+        if [ "$tn" = "$name" ]; then
+          local tp tg
+          tp="$(printf '%s' "$_p" | sed 's/^ *//;s/ *$//')"
+          tg="$(printf '%s' "$_g" | sed 's/^ *//;s/ *$//')"
+          printf -- '- %s | %s | %s | %s\n' "$tn" "$tp" "$tg" "$new_brief" >> "$tmp"
+          found=1
+        else
+          printf '%s\n' "$line" >> "$tmp"
+        fi
+        ;;
+      *) printf '%s\n' "$line" >> "$tmp" ;;
+    esac
+  done < "$f"
+  [ $found -eq 1 ] || { rm -f "$tmp"; die "project '$name' not found"; }
+  mv "$tmp" "$f"
+  ok "updated brief for $name"
+  _bump "project.brief"
+  cmd_save "project: brief $name" --quiet
+}
+
+_project_activate() {
+  local arg="${1:-}"
+  local marker="$MARLOWE_HOME/.active-project"
+  if [ -z "$arg" ] || [ "$arg" = "--clear" ]; then
+    rm -f "$marker"
+    ok "cleared override — \$PWD matching resumes"
+    return 0
+  fi
+  local f="$MARLOWE_HOME/projects.md"
+  [ -f "$f" ] || die "no projects.md"
+  grep -qE "^- *$arg *\|" "$f" || die "project '$arg' not found"
+  printf '%s\n' "$arg" > "$marker"
+  ok "active-project override: $arg  (clear: marlowe project activate --clear)"
+  _bump "project.activate"
+}
+
 cmd_activity() {
   # Fast, lockless append. Single-line appends are atomic on POSIX.
   # Runs zero-cost on the common path — called from shell hook / git hook.
@@ -478,6 +560,10 @@ cmd_wire() {
     if ! grep -qE '^\.counters$' "$gi"; then
       echo ".counters" >> "$gi"
       ok "ignored .counters in $gi"
+    fi
+    if ! grep -qE '^\.active-project$' "$gi"; then
+      echo ".active-project" >> "$gi"
+      ok "ignored .active-project in $gi"
     fi
   fi
 }
@@ -862,6 +948,10 @@ marlowe — portable AI context
   project add [--from-cwd]    register a project (pointer + 80-char brief)
   project list                list known projects; ● marks active
   project active              print the active project name for \$PWD
+  project remove <name>       unregister a project
+  project brief <name> <txt>  update a project's 80-char brief
+  project activate <name>     force active (overrides \$PWD match)
+  project activate --clear    drop the override; resume \$PWD matching
   activity <msg>              fast, lockless append to activities.md (local-only log)
   wire [shell-rc]             install shell + git hooks for auto-capture
   distill [--if-over N]       LLM-compress activities.md into memory.md bullets
