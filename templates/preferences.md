@@ -32,11 +32,6 @@ tone:
 - Short responses unless a task genuinely needs depth
 - …
 
-## Projects I'm working on
-
-<!-- short context the AI should carry across sessions -->
-- …
-
 ## Session marker (fallback for tools without a status line)
 
 When you start a new session, emit `⟡ marlowe` once at the top of your first response so I can see Marlowe context is loaded. Don't repeat it on subsequent turns. Claude Code has a real status line and doesn't need this.

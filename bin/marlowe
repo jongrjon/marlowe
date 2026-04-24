@@ -322,6 +322,108 @@ cmd_add() {
   cmd_save "add $type: $content" --quiet
 }
 
+_project_active_name() {
+  local f="$MARLOWE_HOME/projects.md"
+  [ -f "$f" ] || return 0
+  local pwd_abs
+  pwd_abs="$(pwd -P 2>/dev/null)" || return 0
+  local best_name="" best_len=0
+  while IFS='|' read -r _name _path _rest; do
+    _name="${_name#- }"
+    _name="$(printf '%s' "$_name" | sed 's/^ *//;s/ *$//')"
+    _path="$(printf '%s' "$_path" | sed 's/^ *//;s/ *$//')"
+    _path="${_path/#\~/$HOME}"
+    [ -n "$_path" ] || continue
+    case "$pwd_abs" in
+      "$_path"|"$_path"/*)
+        if [ ${#_path} -gt $best_len ]; then
+          best_len=${#_path}
+          best_name="$_name"
+        fi
+        ;;
+    esac
+  done < <(grep -E '^- ' "$f" 2>/dev/null || true)
+  printf '%s' "$best_name"
+}
+
+cmd_project() {
+  local sub="${1:-list}"; shift || true
+  case "$sub" in
+    add)    _project_add    "$@" ;;
+    list)   _project_list   "$@" ;;
+    active) _project_show_active "$@" ;;
+    *) die "usage: marlowe project <add|list|active>" ;;
+  esac
+}
+
+_project_add() {
+  local from_cwd=0
+  [ "${1:-}" = "--from-cwd" ] && from_cwd=1
+
+  local name path git brief
+  if [ $from_cwd -eq 1 ]; then
+    path="$(pwd -P)"
+    name="$(basename "$path")"
+    git="$(git -C "$path" config --get remote.origin.url 2>/dev/null \
+            | sed -E 's|^https://||; s|^git@||; s|\.git$||; s|:|/|')"
+    [ -n "$git" ] || git="-"
+  else
+    name="$(ask 'name')"
+    path="$(ask 'path (absolute or ~/...)')"
+    git="$(ask 'git (e.g. github.com/owner/repo)' '-')"
+  fi
+  brief="$(ask 'brief (≤80 chars)')"
+  brief="${brief:0:80}"
+
+  local f="$MARLOWE_HOME/projects.md"
+  if [ ! -f "$f" ]; then
+    cat > "$f" <<'EOF'
+# Projects
+
+<!-- managed via `marlowe project add|list`. Format: -->
+<!-- - name | path | git | brief (≤80 chars) -->
+
+EOF
+  fi
+
+  if grep -qE "^- *$name *\|" "$f" 2>/dev/null; then
+    die "project '$name' already in $f"
+  fi
+  printf -- '- %s | %s | %s | %s\n' "$name" "$path" "$git" "$brief" >> "$f"
+  ok "added project: $name  ($path)"
+  _bump "project.add"
+  cmd_save "project: add $name" --quiet
+}
+
+_project_list() {
+  local f="$MARLOWE_HOME/projects.md"
+  [ -f "$f" ] || { say "no projects.md — run: marlowe project add --from-cwd"; return 0; }
+  local active
+  active="$(_project_active_name)"
+  grep -E '^- ' "$f" | while IFS='|' read -r n p g b; do
+    n="${n#- }"
+    n="$(printf '%s' "$n" | sed 's/^ *//;s/ *$//')"
+    p="$(printf '%s' "$p" | sed 's/^ *//;s/ *$//')"
+    b="$(printf '%s' "$b" | sed 's/^ *//;s/ *$//')"
+    if [ "$n" = "$active" ]; then
+      printf '  %s●%s %-12s %s  %s\n' "$PINK" "$RESET" "$n" "$p" "$b"
+    else
+      printf '    %-12s %s  %s\n' "$n" "$p" "$b"
+    fi
+  done
+}
+
+_project_show_active() {
+  local a
+  a="$(_project_active_name)"
+  if [ -n "$a" ]; then
+    printf '%s\n' "$a"
+  else
+    say "no active project at $(pwd -P)"
+    return 1
+  fi
+}
+
 cmd_activity() {
   # Fast, lockless append. Single-line appends are atomic on POSIX.
   # Runs zero-cost on the common path — called from shell hook / git hook.
@@ -670,6 +772,18 @@ cmd_doctor() {
     _check_fail "framework dir missing" "expected $MARLOWE_FRAMEWORK — re-run install.sh"
   fi
 
+  # memory.md size budget (soft 4 KiB — forces visibility before adapter bloat)
+  local mem="$MARLOWE_HOME/memory.md"
+  if [ -f "$mem" ]; then
+    local mem_size
+    mem_size="$(wc -c < "$mem")"
+    if [ "$mem_size" -gt 4096 ]; then
+      _check_warn "memory.md is ${mem_size}B (>4K soft budget)" "shows up as adapter block bloat; consider distill/compaction"
+    else
+      _check_ok "memory.md is ${mem_size}B (under 4K)"
+    fi
+  fi
+
   # preferences.md present and non-placeholder
   local prefs="$MARLOWE_HOME/preferences.md"
   if [ -f "$prefs" ]; then
@@ -745,6 +859,9 @@ marlowe — portable AI context
   sync                        pull private repo, re-apply all adapters
   apply <tool>                re-run one adapter (claude | codex | cursor)
   doctor                      environment / install diagnostic
+  project add [--from-cwd]    register a project (pointer + 80-char brief)
+  project list                list known projects; ● marks active
+  project active              print the active project name for \$PWD
   activity <msg>              fast, lockless append to activities.md (local-only log)
   wire [shell-rc]             install shell + git hooks for auto-capture
   distill [--if-over N]       LLM-compress activities.md into memory.md bullets
@@ -763,6 +880,7 @@ case "$cmd" in
   wire)     cmd_wire     "$@" ;;
   # Write-side: serialize per-host via flock.
   add)      _with_lock cmd_add      "$@" ;;
+  project)  _with_lock cmd_project  "$@" ;;
   edit)     _with_lock cmd_edit     "$@" ;;
   remember) _with_lock cmd_remember "$@" ;;
   save)     _with_lock cmd_save     "$@" ;;
