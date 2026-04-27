@@ -2,11 +2,13 @@
 # Composite statusline: PAI's output + Marlowe's, joined on one line.
 set -u
 
+input=$(cat)   # read stdin once; Claude Code pipes JSON here — PAI needs it
+
 PAI_SL="${PAI_DIR:-$HOME/.claude}/statusline-command.sh"
 MARLOWE_SL="$(dirname "$0")/statusline.sh"
 
 pai_out=""
-[ -x "$PAI_SL" ] && pai_out="$("$PAI_SL" 2>/dev/null || true)"
+[ -x "$PAI_SL" ] && pai_out="$(printf '%s' "$input" | "$PAI_SL" 2>/dev/null || true)"
 
 marlowe_out=""
 [ -x "$MARLOWE_SL" ] && marlowe_out="$("$MARLOWE_SL" 2>/dev/null || true)"

@@ -171,7 +171,7 @@ Marlowe is a POSIX shell project. It depends on `bash` (4+), `git`, `awk`,
 |---|---|---|
 | **Linux** | ✅ Primary | Reference platform; all releases tested here |
 | **Windows + WSL2** | ✅ Recommended for Windows | Identical to Linux, zero changes |
-| **Windows + Git Bash** | ⚠️ Works with caveats | No `flock` by default → intra-host lock degrades to warn-and-proceed. Cursor clipboard uses `clip.exe`. Set `git config --global core.autocrlf input` so shell scripts stay LF. Install.sh symlink may need Windows developer mode enabled, or replace with a wrapper script. |
+| **Windows + Git Bash** | ⚠️ Works with caveats | No `flock` by default → intra-host lock degrades to warn-and-proceed. Cursor clipboard uses `clip.exe`. Set `git config --global core.autocrlf input` so shell scripts stay LF. Install.sh symlink may need Windows developer mode enabled, or replace with a wrapper script. Claude Code `statusLine` requires an explicit `bash.exe` prefix in the command — `marlowe apply claude` generates the correct string automatically. |
 | **Windows + PowerShell** | ❌ Not supported | Would require a parallel implementation. Use WSL2 or Git Bash. |
 | **macOS** | ⚠️ Needs GNU coreutils | `brew install coreutils flock` — then `greadlink -f` and `flock` are available. Without GNU coreutils, `readlink -f` fails silently in some paths and `flock` absence triggers the warn-and-proceed degradation. |
 
