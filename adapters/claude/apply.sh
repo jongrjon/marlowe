@@ -36,9 +36,9 @@ if [[ "${OSTYPE:-}" == msys* ]] || [[ -n "${MSYSTEM:-}" ]] || [[ -n "${WINDIR:-}
   if command -v cygpath >/dev/null 2>&1; then
     _bash_win=$(cygpath -w "${BASH:-/usr/bin/bash}" 2>/dev/null | tr '\\' '/')
     _sl_win=$(cygpath -w "$SL_CMD" 2>/dev/null | tr '\\' '/')
-    SL_FULL_CMD="$_bash_win $_sl_win"
+    SL_FULL_CMD="\"$_bash_win\" $_sl_win"
   else
-    SL_FULL_CMD="C:/Program Files/Git/bin/bash.exe $SL_CMD"
+    SL_FULL_CMD="\"C:/Program Files/Git/bin/bash.exe\" $SL_CMD"
   fi
 else
   SL_FULL_CMD="$SL_CMD"
