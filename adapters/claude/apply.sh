@@ -28,6 +28,39 @@ awk -v b="$BEGIN" -v e="$END" '
 rm -f "$DST.tmp"
 echo "[marlowe/claude] applied -> $DST"
 
+# /private slash command.
+mkdir -p "$HOME/.claude/commands"
+cp "$MARLOWE_FRAMEWORK/adapters/claude/commands/private.md" "$HOME/.claude/commands/private.md"
+
+# Vault hooks (no-ops until 'marlowe vault init'). Merged into settings.json
+# idempotently with jq; a one-time backup is kept next to it.
+SETTINGS="$HOME/.claude/settings.json"
+if command -v jq >/dev/null 2>&1; then
+  [ -f "$SETTINGS" ] || echo '{}' > "$SETTINGS"
+  BIN="$MARLOWE_FRAMEWORK/bin/marlowe"
+  if jq -e . "$SETTINGS" >/dev/null 2>&1; then
+    [ -f "$SETTINGS.pre-marlowe-vault" ] || cp "$SETTINGS" "$SETTINGS.pre-marlowe-vault"
+    jq --arg bin "$BIN" '
+      def ensure($ev; $arg):
+        ($bin + " vault hook " + $arg) as $cmd
+        | .hooks[$ev] = ((.hooks[$ev] // [])
+            | map(.hooks |= map(select((.command // "") | test("marlowe vault hook") | not)))
+            | map(select((.hooks | length) > 0))
+            + [{hooks: [{type: "command", command: $cmd}]}]);
+      .hooks //= {}
+      | ensure("UserPromptSubmit"; "prompt")
+      | ensure("Stop"; "stop")
+      | ensure("SessionStart"; "start")
+      | ensure("SessionEnd"; "end")
+    ' "$SETTINGS" > "$SETTINGS.tmp" && mv "$SETTINGS.tmp" "$SETTINGS"
+    echo "[marlowe/claude] /private command + vault hooks installed"
+  else
+    echo "[marlowe/claude] settings.json isn't valid JSON — skipped vault hooks"
+  fi
+else
+  echo "[marlowe/claude] jq not found — skipped vault hooks (needed for /private)"
+fi
+
 SL_CMD="$MARLOWE_FRAMEWORK/adapters/claude/statusline-composite.sh"
 
 # On Windows, Claude Code uses bash.exe as shell for all commands and auto-detects

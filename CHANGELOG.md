@@ -2,6 +2,31 @@
 
 All notable changes to this project. Format loosely follows [Keep a Changelog](https://keepachangelog.com).
 
+## [0.12.0] — 2026-10-02
+
+### Added
+- **Private vault.** `marlowe vault init|open|seal|checkpoint|sweep|recover|status|archive`.
+  - A GPG-encrypted `state.md` travels in the data repo. The public key encrypts
+    without a passphrase, so hooks can save state unattended.
+  - The decrypted copy lives in `/dev/shm`.
+  - New code lives in `lib/vault.sh`.
+- **`/private` slash command** for Claude Code, installed by `marlowe apply claude`.
+  It comes with four hooks (`UserPromptSubmit`, `Stop`, `SessionStart`, `SessionEnd`),
+  merged into `settings.json` idempotently with jq. A backup is kept at
+  `settings.json.pre-marlowe-vault`.
+- **Per-turn checkpoints** of state and transcript, with a throttled push.
+- **Session sweep** archives a session's Claude Code files (transcript, history
+  lines, paste-cache, session-env) to `~/.private/sessions/` and then removes them.
+- **Crash recovery.** A session marked private whose process died is swept on the
+  next `SessionStart`.
+- **Statusline** shows `🔒 private` and `⚠ private session not cleaned`.
+- **Guardrails.**
+  - `save` refuses plaintext under `vault/`.
+  - `remember`, `draft` and `add` refuse inside a private session.
+  - Vault commit messages never contain content.
+- `tests/vault.bats` adds 12 tests, including a `kill -9` recovery test and a
+  fresh-keyring import test.
+
 ## [0.10.0] — 2026-04-24
 
 ### Added

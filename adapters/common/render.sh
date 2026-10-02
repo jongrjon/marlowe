@@ -74,4 +74,6 @@ You may call `marlowe draft "<fact>"` without a cue when you notice:
 - surprising finding the user reacted to
 
 Drafts queue for `marlowe review` — they don't touch memory directly.
+
+Private context lives in an encrypted vault: only via `/private` when the user asks — never remember/draft it.
 EOF

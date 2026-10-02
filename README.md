@@ -162,10 +162,64 @@ source ~/.bashrc          # or open a new shell
 marlowe distill           # when the log builds up
 ```
 
+## Private vault (`/private`)
+
+For context that must travel between machines and accounts but never sit in
+plaintext: an encrypted state file in your data repo, plus cleanup of
+everything a private Claude Code session leaves behind.
+
+```sh
+marlowe vault init          # once: makes a GPG keypair (passphrase dialog), commits only ciphertext
+marlowe apply claude        # installs /private + the four vault hooks
+```
+
+In Claude Code, `/private` starts a session and `/private end` seals it.
+
+| Piece | Where | In git? |
+|---|---|---|
+| `state.md.gpg`: the only thing a session loads | `~/.marlowe/vault/` | yes (ciphertext) |
+| `pubkey.gpg` / `seckey.gpg` (passphrase-protected) | `~/.marlowe/vault/` | yes |
+| Decrypted working copy | `/dev/shm/marlowe-vault-<uid>/` (RAM) | never |
+| Per-turn transcript checkpoints | `~/.private/live/` | never |
+| Swept session archives | `~/.private/sessions/` | never |
+
+**Lifecycle**
+- **Start:** the `UserPromptSubmit` hook sees `/private` and registers the session
+  in `.vault-open` (gitignored). Capture hooks that honour the marker skip it.
+  `vault open` pulls, decrypts `state.md` into RAM and prints its path.
+- **During:** the `Stop` hook checkpoints after every reply. The state file is
+  encrypted if it changed, the transcript is encrypted to `~/.private/live/`, and
+  the ciphertext is pushed at most every 15 minutes. Encrypting uses the public
+  key, so it never needs the passphrase.
+- **`/private end`:** the AI updates the state file, then `vault seal` commits
+  `vault: seal` and shreds the RAM copy.
+- **Exit:** the `SessionEnd` hook checkpoints, then a detached process sweeps the
+  session a few seconds later. The sweep encrypts its transcript, subagent files,
+  `history.jsonl` lines, paste-cache entries and session-env into
+  `~/.private/sessions/`, then removes them.
+- **Terminal closed, crash or `kill -9`:** the next session's `SessionStart` hook
+  (or `marlowe vault recover`) finds the dead PID and does the same sweep. The
+  statusline shows `🔒 private` or `⚠ private session not cleaned`.
+
+**New machine:** `marlowe sync`, then the first `vault open` imports the key from
+`vault/seckey.gpg` (passphrase).
+
+**Guardrails**
+- `save` refuses if any non-`.gpg` file is under `vault/`.
+- `remember`, `draft` and `add` refuse inside a private session.
+- Vault commits never carry content.
+
+**Limits**
+- Everything said in the session still reaches the model provider.
+- `shred` is best-effort on SSDs, so use full-disk encryption.
+- Hooks Marlowe doesn't own must check `.vault-open` themselves. PAI does this via
+  a local patch.
+
 ## Platform support
 
 Marlowe is a POSIX shell project. It depends on `bash` (4+), `git`, `awk`,
 `sed`, `grep`, `wc`, `mktemp`, `readlink -f`, and (optionally) `flock`.
+The vault also needs `gpg` (2.1.14+), `jq`, `tar` and `shred`.
 
 | Platform | Status | Notes |
 |---|---|---|

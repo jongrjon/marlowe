@@ -279,6 +279,11 @@ cmd_save() {
   done
   [ -d "$MARLOWE_HOME/.git" ] || die "no git in $MARLOWE_HOME — run 'marlowe init'"
 
+  # Never commit vault plaintext, whatever .gitignore says.
+  local stray
+  stray="$(find "$MARLOWE_HOME/vault" -type f ! -name '*.gpg' 2>/dev/null || true)"
+  [ -z "$stray" ] || die "refusing to save: plaintext under vault/ ($stray)"
+
   # Lint, warn only — don't block saves on stylistic issues.
   cmd_lint --warn-only >/dev/null 2>&1 || true
 
@@ -1213,6 +1218,19 @@ cmd_doctor() {
   return 1
 }
 
+# Private vault (encrypted state + private-session hygiene).
+# shellcheck source=../lib/vault.sh
+. "$MARLOWE_FRAMEWORK/lib/vault.sh"
+
+_refuse_if_private() {
+  # Capture commands put text in plaintext files and commit messages — never
+  # from a private session. Override: MARLOWE_ALLOW_WHILE_PRIVATE=1.
+  [ "${MARLOWE_ALLOW_WHILE_PRIVATE:-}" = 1 ] && return 0
+  if _vault_caller_private; then
+    die "refusing '$1' in a private session — put it in the vault state file instead"
+  fi
+}
+
 cmd_help() {
   cat <<EOF
 marlowe — portable AI context
@@ -1242,6 +1260,13 @@ marlowe — portable AI context
                               memory > 4K. --audit forces it, --no-audit skips.
   wire [shell-rc]             install shell + git hooks for auto-capture
   distill [--if-over N]       LLM-compress activities.md into memory.md bullets
+  vault init [--key <fpr>]    set up the encrypted private vault (or import its key here)
+  vault open | seal           decrypt state.md to RAM / re-encrypt, commit, shred
+  vault status                open/closed, private sessions, archive counts
+  vault checkpoint            encrypt state + live transcripts now (hooks do this per turn)
+  vault sweep <session>…      archive a session's Claude Code files to ~/.private, then remove
+  vault recover               sweep private sessions whose process died
+  vault archive <dir>         seal a folder into ~/.private/<date>-personal.tar.gpg
 EOF
 }
 
@@ -1254,13 +1279,14 @@ case "$cmd" in
   lint)     cmd_lint     "$@" ;;
   doctor)   cmd_doctor   "$@" ;;
   activity) cmd_activity "$@" ;;
-  draft)    cmd_draft    "$@" ;;
+  draft)    _refuse_if_private draft; cmd_draft "$@" ;;
+  vault)    cmd_vault    "$@" ;;
   wire)     cmd_wire     "$@" ;;
   # Write-side: serialize per-host via flock.
-  add)      _with_lock cmd_add      "$@" ;;
+  add)      _refuse_if_private add; _with_lock cmd_add "$@" ;;
   project)  _with_lock cmd_project  "$@" ;;
   edit)     _with_lock cmd_edit     "$@" ;;
-  remember) _with_lock cmd_remember "$@" ;;
+  remember) _refuse_if_private remember; _with_lock cmd_remember "$@" ;;
   save)     _with_lock cmd_save     "$@" ;;
   sync)     _with_lock cmd_sync     "$@" ;;
   apply)    _with_lock cmd_apply    "$@" ;;
