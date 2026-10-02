@@ -190,3 +190,15 @@ _sleeper()  { sleep 300 >/dev/null 2>&1 & pid=$!; SLEEPERS+=("$pid"); }
   run bash -c "cd '$MARLOWE_HOME' && MARLOWE_FRAMEWORK='$MARLOWE_FRAMEWORK' bash -c '. \"$MARLOWE_FRAMEWORK/lib/vault.sh\" 2>/dev/null; _vault_claude_pid() { echo $pid; }; _vault_self_sid'"
   [ "$output" = s7 ]
 }
+
+@test "checkpoint survives a transcript that grows while being encrypted" {
+  _init
+  _session s8
+  printf 's8\tended\tnow\t%s\n' "$HOME/.claude/projects/-proj/s8.jsonl" > "$MARLOWE_HOME/.vault-open"
+  ( for i in $(seq 1 400); do echo '{"type":"assistant","text":"growing growing growing growing"}' >> "$HOME/.claude/projects/-proj/s8.jsonl"; done ) &
+  w=$!
+  run MARLOWE vault checkpoint --session s8
+  wait $w
+  [ "$status" -eq 0 ]
+  gpg -q -d "$MARLOWE_PRIVATE/live/s8.jsonl.gpg" 2>/dev/null | grep -q secret-words
+}

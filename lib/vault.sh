@@ -294,7 +294,9 @@ _vault_checkpoint_transcript() {
   live="$VAULT_PRIVATE/live/$sid.jsonl.gpg"
   [ -f "$live" ] && [ ! "$tr" -nt "$live" ] && return 0
   mkdir -p "$VAULT_PRIVATE/live"; chmod 700 "$VAULT_PRIVATE" "$VAULT_PRIVATE/live" 2>/dev/null || true
-  _vault_encrypt "$tr" "$live"
+  # Stream it: Claude Code may append while we read, and gpg given a path
+  # fails when the file grows under it. A best-effort snapshot is enough.
+  _vault_encrypt - "$live" < "$tr" || { rm -f "$live.tmp"; return 0; }
 }
 
 vault_checkpoint() {
@@ -305,8 +307,8 @@ vault_checkpoint() {
   [ -f "$VAULT_DIR/pubkey.gpg" ] || return 0
   local changed; changed="$(_vault_save_state)"
   local s
-  if [ -n "$sid" ]; then _vault_checkpoint_transcript "$sid"
-  else for s in $(_vault_sessions | cut -f1); do _vault_checkpoint_transcript "$s"; done
+  if [ -n "$sid" ]; then _vault_checkpoint_transcript "$sid" || true
+  else for s in $(_vault_sessions | cut -f1); do _vault_checkpoint_transcript "$s" || true; done
   fi
   # Push the encrypted state at most every VAULT_PUSH_EVERY seconds.
   if [ $push -eq 1 ] && { ! git -C "$MARLOWE_HOME" diff --quiet HEAD -- vault 2>/dev/null \
