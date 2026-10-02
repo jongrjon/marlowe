@@ -2,6 +2,33 @@
 
 All notable changes to this project. Format loosely follows [Keep a Changelog](https://keepachangelog.com).
 
+## [0.13.0] — 2026-10-02
+
+### Added
+- **`marlowe vault pai-patch [--check] [--quiet]`** makes PAI's capture hooks skip
+  private sessions on any machine.
+  - It patches 12 hooks: AutoWorkCreation, FormatReminder, UpdateTabTitle,
+    ImplicitSentimentCapture, ExplicitRatingCapture, WorkCompletionLearning,
+    SessionSummary, AgentOutputCapture, StopOrchestrator, RelationshipMemory,
+    SoulEvolution, and SecurityValidator (log only).
+  - It also adds `--no-session-persistence` to PAI's `Inference.ts`.
+  - Edits are matched by pattern, checked to compile (or rolled back), idempotent,
+    and the originals are backed up.
+  - The patcher lives in `adapters/claude/pai/`.
+- **Runs automatically** from `marlowe apply claude`, and is re-checked on every
+  `SessionStart`, so PAI upgrades get re-patched. This works before the vault
+  exists on a machine.
+- `vault status` reports whether the PAI patch is in place.
+- `vault open` registers the session itself from `~/.claude/sessions/<pid>.json`
+  if the prompt hook missed it.
+
+### Fixed
+- Live transcript checkpoints are streamed into gpg. A transcript that grows
+  during encryption no longer aborts `vault seal`.
+- `vault status` no longer exits non-zero before any archive exists.
+- Tests no longer inherit `PAI_DIR`, `CLAUDE_CONFIG_DIR` or `MARLOWE_PRIVATE` from
+  the real environment.
+
 ## [0.12.0] — 2026-10-02
 
 ### Added

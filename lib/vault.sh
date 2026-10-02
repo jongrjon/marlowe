@@ -446,6 +446,10 @@ vault_status() {
   nl="$({ find "$VAULT_PRIVATE/live" -name '*.gpg' 2>/dev/null || true; } | wc -l | tr -d ' ')"
   ns="$({ find "$VAULT_PRIVATE/sessions" -name '*.gpg' 2>/dev/null || true; } | wc -l | tr -d ' ')"
   ok "archive: $ns swept session(s), $nl live checkpoint(s) in ${VAULT_PRIVATE/#$HOME/\~}"
+  if _vault_pai_present; then
+    if _vault_pai_needs_patch; then printf '  %s!%s PAI hooks not patched for private sessions — run: marlowe vault pai-patch\n' "$PINK" "$RESET"
+    else ok "PAI hooks honour private sessions"; fi
+  fi
   local stray; stray="$(find "$VAULT_DIR" -type f ! -name '*.gpg' 2>/dev/null || true)"
   [ -z "$stray" ] || printf '  %s!%s plaintext under vault/: %s\n' "$PINK" "$RESET" "$stray"
 }
@@ -465,13 +469,45 @@ vault_archive() {
   if [ $do_shred -eq 1 ]; then _vault_shred_tree "$src"; ok "source shredded"; fi
 }
 
+_vault_pai_dir() { printf '%s' "${PAI_DIR:-$HOME/.claude}"; }
+
+_vault_pai_present() { ls "$(_vault_pai_dir)"/hooks/*.hook.ts >/dev/null 2>&1; }
+
+_vault_pai_needs_patch() {
+  # Cheap check (no bun): guard lib current, and every present target hook marked.
+  local d; d="$(_vault_pai_dir)"
+  cmp -s "$MARLOWE_FRAMEWORK/adapters/claude/pai/private.ts" "$d/hooks/lib/private.ts" || return 0
+  local h
+  for h in AutoWorkCreation FormatReminder UpdateTabTitle ImplicitSentimentCapture \
+           ExplicitRatingCapture WorkCompletionLearning SessionSummary AgentOutputCapture \
+           StopOrchestrator RelationshipMemory SoulEvolution SecurityValidator; do
+    [ -f "$d/hooks/$h.hook.ts" ] || continue
+    grep -q 'private-session patch' "$d/hooks/$h.hook.ts" || return 0
+  done
+  local inf="$d/skills/PAI/Tools/Inference.ts"
+  [ ! -f "$inf" ] || grep -q 'private-session patch' "$inf" || return 0
+  return 1
+}
+
+vault_pai_patch() {
+  # vault pai-patch [--check] [--quiet] — make PAI capture hooks honour .vault-open.
+  _vault_pai_present || { [ "${1:-}" = --quiet ] || say "no PAI hooks at $(_vault_pai_dir)/hooks — nothing to patch"; return 0; }
+  command -v bun >/dev/null 2>&1 || { say "bun not found — can't patch PAI hooks (PAI needs bun anyway)"; return 1; }
+  PAI_DIR="$(_vault_pai_dir)" bun "$MARLOWE_FRAMEWORK/adapters/claude/pai/patch.ts" "$@"
+}
+
 vault_hook() {
   # Claude Code hook entrypoint. Never fails, never blocks the session.
   local event="${1:-}" input sid prompt tr
   input="$(cat 2>/dev/null || true)"
   sid="$(printf '%s' "$input" | jq -r '.session_id // empty' 2>/dev/null || true)"
   case "$sid" in *[!A-Za-z0-9_-]*) return 0 ;; esac
-  [ -f "$VAULT_DIR/pubkey.gpg" ] || return 0
+  if [ ! -f "$VAULT_DIR/pubkey.gpg" ]; then
+    # No vault on this machine yet: still keep PAI patched so /private works the
+    # moment the vault is pulled in.
+    [ "$event" = start ] && _vault_pai_present && _vault_pai_needs_patch && { vault_pai_patch --quiet >/dev/null 2>&1 || true; }
+    return 0
+  fi
   case "$event" in
     prompt)
       prompt="$(printf '%s' "$input" | jq -r '.prompt // empty' 2>/dev/null || true)"
@@ -482,6 +518,10 @@ vault_hook() {
     stop)
       [ -n "$sid" ] && [ -n "$(_vault_field "$sid" 1)" ] && vault_checkpoint --quiet --session "$sid" ;;
     start)
+      # Self-heal: a PAI upgrade may have overwritten the patched hooks.
+      if _vault_pai_present && _vault_pai_needs_patch; then
+        vault_pai_patch --quiet >/dev/null 2>&1 || true
+      fi
       vault_recover --quiet >/dev/null 2>&1 || true
       if [ -f "$MARLOWE_HOME/.vault-recovered" ]; then
         echo "marlowe: $(cat "$MARLOWE_HOME/.vault-recovered") private session(s) had ended without /private end — they were checkpointed, archived to ~/.private and swept. Tell the user in one line."
@@ -516,7 +556,8 @@ cmd_vault() {
     recover)    vault_recover "$@" ;;
     status)     vault_status "$@" ;;
     archive)    vault_archive "$@" ;;
+    pai-patch)  vault_pai_patch "$@" ;;
     hook)       { vault_hook "$@"; } 2>/dev/null || true ;;
-    *) die "usage: marlowe vault <init|open|seal|checkpoint|sweep|recover|status|archive|hook>" ;;
+    *) die "usage: marlowe vault <init|open|seal|checkpoint|sweep|recover|status|archive|pai-patch|hook>" ;;
   esac
 }

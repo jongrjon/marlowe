@@ -202,3 +202,62 @@ _sleeper()  { sleep 300 >/dev/null 2>&1 & pid=$!; SLEEPERS+=("$pid"); }
   [ "$status" -eq 0 ]
   gpg -q -d "$MARLOWE_PRIVATE/live/s8.jsonl.gpg" 2>/dev/null | grep -q secret-words
 }
+
+# ---- PAI patch ------------------------------------------------------------
+
+_fakepai() {
+  command -v bun >/dev/null 2>&1 || skip "bun not installed"
+  export PAI_DIR="$HOME/pai"
+  cp -a "$MARLOWE_FRAMEWORK/tests/fixtures/pai" "$PAI_DIR"
+}
+_run_hook() { printf '%s' "$2" | bun "$PAI_DIR/hooks/$1.hook.ts" >/dev/null 2>&1; }
+
+@test "pai-patch patches every hook style + Inference, idempotently" {
+  _fakepai
+  run MARLOWE vault pai-patch --check
+  [ "$status" -ne 0 ]
+  MARLOWE vault pai-patch --quiet
+  for h in AutoWorkCreation StopOrchestrator SessionSummary SecurityValidator; do
+    grep -q 'private-session patch' "$PAI_DIR/hooks/$h.hook.ts"
+  done
+  grep -q -- '--no-session-persistence' "$PAI_DIR/skills/PAI/Tools/Inference.ts"
+  [ -f "$PAI_DIR/hooks/lib/private.ts" ]
+  [ -f "$PAI_DIR/hooks/PRIVATE-PATCH.md" ]
+  ls -d "$PAI_DIR"/hooks.bak-marlowe-*
+  run MARLOWE vault pai-patch --check
+  [ "$status" -eq 0 ]
+  MARLOWE vault pai-patch --quiet
+  [ "$(grep -c 'private-session patch' "$PAI_DIR/hooks/AutoWorkCreation.hook.ts")" -eq 1 ]
+}
+
+@test "patched hooks skip private sessions and still capture normal ones" {
+  _fakepai
+  MARLOWE vault pai-patch --quiet
+  printf 'priv\t-\tnow\t-\n' > "$MARLOWE_HOME/.vault-open"
+  _run_hook AutoWorkCreation '{"session_id":"priv","prompt":"secret"}'
+  _run_hook StopOrchestrator '{"session_id":"priv"}'
+  _run_hook SessionSummary   '{"session_id":"priv"}'
+  _run_hook SecurityValidator '{"session_id":"priv"}'
+  _run_hook AutoWorkCreation '{"session_id":"other","prompt":"/private"}'
+  [ ! -e "$PAI_DIR/MEMORY" ] || [ -z "$(ls -A "$PAI_DIR/MEMORY")" ]
+  _run_hook AutoWorkCreation '{"session_id":"normal","prompt":"work"}'
+  _run_hook SecurityValidator '{"session_id":"normal"}'
+  [ -f "$PAI_DIR/MEMORY/AutoWorkCreation" ]
+  [ -f "$PAI_DIR/MEMORY/SecurityValidator" ]
+}
+
+@test "SessionStart re-patches after a PAI upgrade overwrites a hook" {
+  _fakepai
+  _init
+  MARLOWE vault pai-patch --quiet
+  cp "$MARLOWE_FRAMEWORK/tests/fixtures/pai/hooks/AutoWorkCreation.hook.ts" "$PAI_DIR/hooks/"
+  ! grep -q 'private-session patch' "$PAI_DIR/hooks/AutoWorkCreation.hook.ts"
+  _hook start '{"session_id":"new"}'
+  grep -q 'private-session patch' "$PAI_DIR/hooks/AutoWorkCreation.hook.ts"
+}
+
+@test "SessionStart patches PAI even before the vault exists on this machine" {
+  _fakepai
+  _hook start '{"session_id":"new"}'
+  grep -q 'private-session patch' "$PAI_DIR/hooks/StopOrchestrator.hook.ts"
+}

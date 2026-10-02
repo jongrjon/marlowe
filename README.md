@@ -201,8 +201,33 @@ In Claude Code, `/private` starts a session and `/private end` seals it.
   (or `marlowe vault recover`) finds the dead PID and does the same sweep. The
   statusline shows `🔒 private` or `⚠ private session not cleaned`.
 
-**New machine:** `marlowe sync`, then the first `vault open` imports the key from
-`vault/seckey.gpg` (passphrase).
+**New machine**
+1. Prerequisites: `git`, `gpg` 2.1.14+, `jq`, `tar`, `shred`, a pinentry, and
+   access to your data repo.
+2. Run `install.sh`. The wizard clones the data repo.
+3. Run `marlowe apply claude` once Claude Code has created `~/.claude`.
+4. In Claude Code, run `/private`. The first time, it imports the key from
+   `vault/seckey.gpg`, which asks for your passphrase.
+5. Check with `marlowe vault status`.
+
+Open the vault on one machine at a time. Run `/private end` before switching,
+because the encrypted state can't be merged.
+
+**PAI.** If PAI's hooks are present, `marlowe apply claude` patches its capture
+hooks to skip private sessions (`marlowe vault pai-patch`, which needs `bun`).
+- **What changes:**
+  - each capture hook gains an import and a guard line, using `hooks/lib/private.ts`
+  - `SecurityValidator` still blocks commands, but skips its log for private sessions
+  - PAI's `Inference.ts` stops saving a transcript for every inference call, in all
+    sessions
+- **How it applies:** insertion points are matched by pattern, not exact text.
+  Every edit is checked to compile, and the original is restored if it doesn't.
+  Originals are kept in `hooks.bak-marlowe-<date>/`.
+- **After PAI upgrades:** every `SessionStart` checks the patch and reapplies it if
+  an upgrade overwrote the hooks. This also happens on machines that don't have a
+  vault yet.
+- **Status:** `marlowe vault status` reports whether the patch is in place;
+  `pai-patch --check` checks it without changing anything.
 
 **Guardrails**
 - `save` refuses if any non-`.gpg` file is under `vault/`.
@@ -212,8 +237,8 @@ In Claude Code, `/private` starts a session and `/private end` seals it.
 **Limits**
 - Everything said in the session still reaches the model provider.
 - `shred` is best-effort on SSDs, so use full-disk encryption.
-- Hooks Marlowe doesn't own must check `.vault-open` themselves. PAI does this via
-  a local patch.
+- Other hook frameworks must check `.vault-open` themselves. PAI is patched
+  automatically.
 
 ## Platform support
 

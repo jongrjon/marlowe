@@ -9,6 +9,8 @@ _setup_home() {
   local tmp
   tmp="$(mktemp -d)"
   export HOME="$tmp"
+  # The real env may point at live tool dirs (PAI exports PAI_DIR); never inherit them.
+  unset PAI_DIR CLAUDE_CONFIG_DIR CLAUDE_SESSION_ID MARLOWE_PRIVATE
   export MARLOWE_HOME="$HOME/.marlowe"
   export GIT_CONFIG_GLOBAL="$HOME/.gitconfig"
   touch "$GIT_CONFIG_GLOBAL"

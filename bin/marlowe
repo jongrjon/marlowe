@@ -1267,6 +1267,7 @@ marlowe — portable AI context
   vault sweep <session>…      archive a session's Claude Code files to ~/.private, then remove
   vault recover               sweep private sessions whose process died
   vault archive <dir>         seal a folder into ~/.private/<date>-personal.tar.gpg
+  vault pai-patch [--check]   make PAI capture hooks skip private sessions (auto on apply + SessionStart)
 EOF
 }
 

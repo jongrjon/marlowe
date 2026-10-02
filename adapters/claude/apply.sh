@@ -61,6 +61,20 @@ else
   echo "[marlowe/claude] jq not found — skipped vault hooks (needed for /private)"
 fi
 
+# PAI: patch capture hooks to skip private sessions (idempotent; re-checked at
+# every SessionStart by the vault hook, so PAI upgrades get re-patched).
+if ls "${PAI_DIR:-$HOME/.claude}"/hooks/*.hook.ts >/dev/null 2>&1; then
+  if command -v bun >/dev/null 2>&1; then
+    if PAI_DIR="${PAI_DIR:-$HOME/.claude}" bun "$MARLOWE_FRAMEWORK/adapters/claude/pai/patch.ts" --quiet; then
+      echo "[marlowe/claude] PAI hooks patched for private sessions"
+    else
+      echo "[marlowe/claude] PAI patch incomplete — run 'marlowe vault pai-patch' for details"
+    fi
+  else
+    echo "[marlowe/claude] PAI found but bun isn't on PATH — PAI hooks not patched"
+  fi
+fi
+
 SL_CMD="$MARLOWE_FRAMEWORK/adapters/claude/statusline-composite.sh"
 
 # On Windows, Claude Code uses bash.exe as shell for all commands and auto-detects
