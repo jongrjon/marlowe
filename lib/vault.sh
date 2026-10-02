@@ -432,10 +432,10 @@ vault_status() {
   local last; last="$(git -C "$MARLOWE_HOME" log -1 --format='%cr' -- vault/state.md.gpg 2>/dev/null || true)"
   [ -n "$last" ] && ok "state last committed $last"
   local nl ns
-  nl="$(find "$VAULT_PRIVATE/live" -name '*.gpg' 2>/dev/null | wc -l | tr -d ' ')"
-  ns="$(find "$VAULT_PRIVATE/sessions" -name '*.gpg' 2>/dev/null | wc -l | tr -d ' ')"
+  nl="$({ find "$VAULT_PRIVATE/live" -name '*.gpg' 2>/dev/null || true; } | wc -l | tr -d ' ')"
+  ns="$({ find "$VAULT_PRIVATE/sessions" -name '*.gpg' 2>/dev/null || true; } | wc -l | tr -d ' ')"
   ok "archive: $ns swept session(s), $nl live checkpoint(s) in ${VAULT_PRIVATE/#$HOME/\~}"
-  local stray; stray="$(find "$VAULT_DIR" -type f ! -name '*.gpg' 2>/dev/null)"
+  local stray; stray="$(find "$VAULT_DIR" -type f ! -name '*.gpg' 2>/dev/null || true)"
   [ -z "$stray" ] || printf '  %s!%s plaintext under vault/: %s\n' "$PINK" "$RESET" "$stray"
 }
 

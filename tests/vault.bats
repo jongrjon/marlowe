@@ -174,5 +174,7 @@ _sleeper()  { sleep 300 >/dev/null 2>&1 & pid=$!; SLEEPERS+=("$pid"); }
   _init
   printf 'dead1\t999999\tnow\t-\n' > "$MARLOWE_HOME/.vault-open"
   run MARLOWE vault status
+  [ "$status" -eq 0 ]
   [[ "$output" == *"orphaned session dead1"* ]]
+  [[ "$output" == *"archive: 0 swept session(s)"* ]]
 }
