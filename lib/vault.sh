@@ -135,6 +135,14 @@ _vault_current_sid() {
   _vault_sessions | awk -F'\t' -v p="$pid" '$2==p{print $1; exit}'
 }
 
+_vault_self_sid() {
+  # Our own Claude Code session id, registered or not: env, else the
+  # ~/.claude/sessions/<pid>.json file Claude Code keeps for each live process.
+  if [ -n "${CLAUDE_SESSION_ID:-}" ]; then printf '%s' "$CLAUDE_SESSION_ID"; return; fi
+  local pid; pid="$(_vault_claude_pid)" || return 1
+  jq -r '.sessionId // empty' "$VAULT_CLAUDE/sessions/$pid.json" 2>/dev/null
+}
+
 _vault_caller_private() { local s; s="$(_vault_current_sid 2>/dev/null)"; [ -n "$s" ]; }
 
 _vault_find_transcript() {
@@ -233,6 +241,7 @@ vault_open() {
   vault_recover --quiet || true
 
   [ -n "$sid" ] || sid="$(_vault_current_sid 2>/dev/null || true)"
+  [ -n "$sid" ] || sid="$(_vault_self_sid 2>/dev/null || true)"
   if [ -n "$sid" ]; then
     local pid tr
     pid="$(_vault_field "$sid" 2)"; [ -n "$pid" ] && [ "$pid" != - ] || pid="$(_vault_claude_pid || echo -)"

@@ -178,3 +178,15 @@ _sleeper()  { sleep 300 >/dev/null 2>&1 & pid=$!; SLEEPERS+=("$pid"); }
   [[ "$output" == *"orphaned session dead1"* ]]
   [[ "$output" == *"archive: 0 swept session(s)"* ]]
 }
+
+@test "open self-registers from Claude Code's sessions/<pid>.json when the prompt hook missed" {
+  _init
+  _session s7
+  _sleeper
+  mkdir -p "$HOME/.claude/sessions"
+  printf '{"pid":%s,"sessionId":"s7"}' "$pid" > "$HOME/.claude/sessions/$pid.json"
+  # run open as a child of the fake "claude" (sleep) process isn't possible, so
+  # exercise the lookup directly through the env-free path via a pid override
+  run bash -c "cd '$MARLOWE_HOME' && MARLOWE_FRAMEWORK='$MARLOWE_FRAMEWORK' bash -c '. \"$MARLOWE_FRAMEWORK/lib/vault.sh\" 2>/dev/null; _vault_claude_pid() { echo $pid; }; _vault_self_sid'"
+  [ "$output" = s7 ]
+}
